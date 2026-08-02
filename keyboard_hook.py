@@ -63,16 +63,14 @@ def _on_key_event(event: keyboard.KeyboardEvent):
             _chat_paused_until = time.time() + _CHAT_TIMEOUT
             return  # don't process this key as a mapping
 
-        # While paused, any key extends the timeout (so typing keeps it paused)
+        # While paused (and still within timeout), any key extends it —
+        # typing keeps the pause alive. If the timeout already expired,
+        # resume instead of re-arming (fixes pause never auto-resuming).
         if _chat_paused_until > 0:
-            _chat_paused_until = time.time() + _CHAT_TIMEOUT
-
-    # --- Check if chat-paused (after possible extension) ---
-    if _chat_paused_until > 0:
-        if time.time() < _chat_paused_until:
-            return  # skip sync while chatting
-        else:
-            _chat_paused_until = 0.0  # timeout, resume
+            if time.time() < _chat_paused_until:
+                _chat_paused_until = time.time() + _CHAT_TIMEOUT
+            else:
+                _chat_paused_until = 0.0  # timeout expired — resume
 
     # --- Process mappings ---
     source_to_target = {m["source"]: m["target"] for m in mappings}
@@ -83,6 +81,12 @@ def _on_key_event(event: keyboard.KeyboardEvent):
     target_key = source_to_target[event_name]
 
     if event.event_type == keyboard.KEY_DOWN:
+        # Chat-pause gate: while paused (within timeout), don't inject.
+        if _chat_paused_until > 0:
+            if time.time() >= _chat_paused_until:
+                _chat_paused_until = 0.0  # timeout expired, resume
+            else:
+                return
         if not _keys_down.get(event_name, False):
             _keys_down[event_name] = True
             if _foreground_monitor is not None and _foreground_monitor.is_allowed():
@@ -91,8 +95,9 @@ def _on_key_event(event: keyboard.KeyboardEvent):
     elif event.event_type == keyboard.KEY_UP:
         if _keys_down.get(event_name, False):
             _keys_down[event_name] = False
-            if _foreground_monitor is not None and _foreground_monitor.is_allowed():
-                keyboard.release(target_key)
+            # Always release keys we injected, even if chat-paused or the
+            # foreground app changed — otherwise the target key stays stuck.
+            keyboard.release(target_key)
 
 
 # ------------------------------------------------------------------
@@ -100,8 +105,18 @@ def _on_key_event(event: keyboard.KeyboardEvent):
 # ------------------------------------------------------------------
 
 def _on_toggle():
+    global _keys_down
     if _config is not None:
-        _config.toggle_enabled()
+        new_state = _config.toggle_enabled()
+        if not new_state:
+            # Sync disabled — release every key we may have injected,
+            # otherwise the target key stays stuck until re-enabled.
+            for m in _config.get_mappings():
+                try:
+                    keyboard.release(m["target"])
+                except Exception:
+                    pass
+            _keys_down = {}
 
 
 # ------------------------------------------------------------------
