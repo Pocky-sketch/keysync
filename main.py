@@ -72,6 +72,28 @@ def _is_admin() -> bool:
 # Main
 # ------------------------------------------------------------------
 
+WM_CLOSE = 0x0010
+
+
+def _make_tray_quit(gui):
+    """Return a thread-safe quit callback for the tray thread.
+
+    tkinter is not thread-safe — calling root.quit() from the tray
+    thread does not stop the mainloop. Instead we post WM_CLOSE to the
+    main window; tkinter handles it on the main thread and fires the
+    WM_DELETE_WINDOW protocol (gui.quit), which ends the mainloop and
+    lets the process exit cleanly.
+    """
+    def quit_from_tray():
+        try:
+            hwnd = gui.get_hwnd()
+            ctypes.windll.user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+        except Exception:
+            # Last resort — direct call (may fail silently, but better
+            # than a dead tray click).
+            gui.quit()
+    return quit_from_tray
+
 
 def main():
     # --- Single-instance check ---
@@ -147,7 +169,7 @@ def main():
         else:
             gui.show()
 
-    tray = TrayIcon(config, toggle_gui)
+    tray = TrayIcon(config, toggle_gui, on_quit=_make_tray_quit(gui))
     tray.start()
 
     # --- Show GUI on first run ---

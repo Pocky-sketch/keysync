@@ -225,6 +225,7 @@ _kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
 # ------------------------------------------------------------------
 _config: Config | None = None
 _show_callback = None  # callable to show/hide config window
+_quit_callback = None  # callable to quit the whole app (tk mainloop)
 _tray_wndproc_holder = None  # keep WNDPROC alive (ctypes GC guard)
 
 
@@ -351,6 +352,11 @@ def _tray_wndproc(hwnd, msg, wParam, lParam):
             if _config:
                 _config.toggle_enabled()
         elif cmd == ID_QUIT:
+            # Quit must also stop the tk mainloop on the main thread —
+            # otherwise only the tray thread dies and the process becomes
+            # a hidden zombie holding the single-instance mutex.
+            if _quit_callback:
+                _quit_callback()
             _user32.DestroyWindow(hwnd)
 
     elif msg == WM_DESTROY:
@@ -403,10 +409,11 @@ class TrayIcon:
 
     TIP_TEXT = "按键同步"
 
-    def __init__(self, config: Config, show_callback):
-        global _config, _show_callback
+    def __init__(self, config: Config, show_callback, on_quit=None):
+        global _config, _show_callback, _quit_callback
         _config = config
         _show_callback = show_callback
+        _quit_callback = on_quit
 
         self._running = False
         self._thread: threading.Thread | None = None

@@ -95,6 +95,31 @@ class ConfigGUI:
     def run(self):
         self._root.mainloop()
 
+    def get_hwnd(self) -> int:
+        """Return the real top-level HWND of the config window.
+
+        Used to post WM_CLOSE from another thread (tkinter is not
+        thread-safe, so the tray thread must not call root.quit()
+        directly).
+
+        NOTE: winfo_id() returns Tk's internal wrapper handle, not the
+        top-level window — WM_CLOSE posted to it never fires the
+        WM_DELETE_WINDOW protocol. FindWindowW by title finds the real
+        top-level window.
+        """
+        import ctypes
+        import ctypes.wintypes as wintypes
+        user32 = ctypes.windll.user32
+        user32.FindWindowW.restype = wintypes.HWND
+        user32.FindWindowW.argtypes = [
+            wintypes.LPCWSTR, wintypes.LPCWSTR,
+        ]
+        title = self._root.title()
+        hwnd = user32.FindWindowW(None, title)
+        if hwnd:
+            return int(hwnd)
+        return int(self._root.winfo_id())  # fallback
+
     def quit(self):
         self._root.quit()
         self._root.destroy()
