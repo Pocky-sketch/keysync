@@ -37,6 +37,8 @@ class Config:
             ],
             "allowed_apps": [],
             "warned_admin": False,
+            "autoclick_enabled": False,
+            "autoclick_interval": 50,  # ms between clicks while held
         }
 
         self._has_run_before = os.path.exists(self._path)
@@ -139,6 +141,29 @@ class Config:
             self._save()
 
     # ------------------------------------------------------------------
+    # Public API — auto-clicker
+    # ------------------------------------------------------------------
+
+    def is_autoclick_enabled(self) -> bool:
+        with self._lock:
+            return bool(self._data.get("autoclick_enabled", False))
+
+    def set_autoclick_enabled(self, v: bool):
+        with self._lock:
+            self._data["autoclick_enabled"] = bool(v)
+            self._save()
+
+    def get_autoclick_interval(self) -> int:
+        """Return click interval in milliseconds (clamped to [20, 500])."""
+        with self._lock:
+            return max(20, min(500, int(self._data.get("autoclick_interval", 50))))
+
+    def set_autoclick_interval(self, ms: int):
+        with self._lock:
+            self._data["autoclick_interval"] = max(20, min(500, int(ms)))
+            self._save()
+
+    # ------------------------------------------------------------------
     # Public API — key mappings
     # ------------------------------------------------------------------
 
@@ -227,6 +252,8 @@ class Config:
                 self._data["chat_keys_default"] = loaded.get("chat_keys_default", ["enter", "t", "/"])
                 self._data["app_chat_keys"] = loaded.get("app_chat_keys", {})
                 self._data["warned_admin"] = loaded.get("warned_admin", False)
+                self._data["autoclick_enabled"] = loaded.get("autoclick_enabled", False)
+                self._data["autoclick_interval"] = loaded.get("autoclick_interval", 50)
 
                 # Migrate old format: source_key / target_key → key_mappings
                 if "key_mappings" in loaded:

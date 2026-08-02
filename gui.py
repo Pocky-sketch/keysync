@@ -185,6 +185,24 @@ class ConfigGUI:
                         checkmark_color=WHITE, border_color=PINK_BORDER,
                         ).pack(pady=(0, 4))
 
+        # --- Auto-click toggle + interval ---
+        auto_row = ctk.CTkFrame(self._root, fg_color="transparent")
+        auto_row.pack(pady=(0, 4))
+        self._autoclick_var = tk.BooleanVar(value=self._config.is_autoclick_enabled())
+        ctk.CTkCheckBox(auto_row,
+                        text="🖱 按住左键自动连点（松开停止）",
+                        variable=self._autoclick_var,
+                        command=self._on_toggle_autoclick,
+                        fg_color=PINK_HOVER, hover_color=PINK_HOVER,
+                        text_color=PLUM, font=("Segoe UI", 10),
+                        checkmark_color=WHITE, border_color=PINK_BORDER,
+                        ).pack(side=tk.LEFT)
+        ctk.CTkButton(auto_row, text="间隔", width=56, height=24,
+                      fg_color=PINK_BTN, hover_color=PINK_HOVER,
+                      text_color=ROSE, corner_radius=12,
+                      command=self._on_set_autoclick_interval
+                      ).pack(side=tk.RIGHT, padx=2)
+
         # --- Lace bottom ---
         ctk.CTkLabel(self._root, text=LACE_BOT,
                      text_color=LIGHT, font=("Segoe UI", 10)).pack(pady=(2, 2))
@@ -262,6 +280,23 @@ class ConfigGUI:
 
     def _on_toggle_typing_pause(self):
         self._config.set_typing_pause(self._typing_pause_var.get())
+
+    def _on_toggle_autoclick(self):
+        self._config.set_autoclick_enabled(self._autoclick_var.get())
+
+    def _on_set_autoclick_interval(self):
+        current = self._config.get_autoclick_interval()
+        dialog = ctk.CTkInputDialog(
+            text=f"连点间隔（毫秒，20~500）：\n当前 {current} ms\n数值越小点击越快",
+            title=f"{HEART} 连点间隔",
+        )
+        val = dialog.get_input()
+        if val:
+            try:
+                self._config.set_autoclick_interval(int(val.strip()))
+            except ValueError:
+                from tkinter import messagebox
+                messagebox.showinfo("提示", "请输入数字（毫秒）。")
 
     # ── Key mapping handlers ────────────────────────────────────────
 
@@ -370,6 +405,7 @@ class ConfigGUI:
 
         self._enabled_var.set(self._config.is_enabled())
         self._typing_pause_var.set(self._config.is_typing_pause())
+        self._autoclick_var.set(self._config.is_autoclick_enabled())
 
     def _get_selected_app_name(self):
         sel = self._app_listbox.curselection()

@@ -30,6 +30,25 @@ _toggle_hotkey_handler = None
 
 
 # ------------------------------------------------------------------
+# Chat-pause state
+# ------------------------------------------------------------------
+
+def is_chat_paused() -> bool:
+    """Return True if chat-pause is active (and its timeout hasn't expired).
+
+    Expired pauses are cleared here so callers don't each re-implement
+    the timeout check. Used by the keyboard hook and the auto-clicker.
+    """
+    global _chat_paused_until
+    if _chat_paused_until <= 0:
+        return False
+    if time.time() >= _chat_paused_until:
+        _chat_paused_until = 0.0  # timeout expired — resume
+        return False
+    return True
+
+
+# ------------------------------------------------------------------
 # Hook callback
 # ------------------------------------------------------------------
 
@@ -64,13 +83,10 @@ def _on_key_event(event: keyboard.KeyboardEvent):
             return  # don't process this key as a mapping
 
         # While paused (and still within timeout), any key extends it —
-        # typing keeps the pause alive. If the timeout already expired,
-        # resume instead of re-arming (fixes pause never auto-resuming).
-        if _chat_paused_until > 0:
-            if time.time() < _chat_paused_until:
-                _chat_paused_until = time.time() + _CHAT_TIMEOUT
-            else:
-                _chat_paused_until = 0.0  # timeout expired — resume
+        # typing keeps the pause alive. Expired pauses are cleared by
+        # is_chat_paused() so the pause can't be re-armed forever.
+        if is_chat_paused():
+            _chat_paused_until = time.time() + _CHAT_TIMEOUT
 
     # --- Process mappings ---
     source_to_target = {m["source"]: m["target"] for m in mappings}
@@ -82,11 +98,8 @@ def _on_key_event(event: keyboard.KeyboardEvent):
 
     if event.event_type == keyboard.KEY_DOWN:
         # Chat-pause gate: while paused (within timeout), don't inject.
-        if _chat_paused_until > 0:
-            if time.time() >= _chat_paused_until:
-                _chat_paused_until = 0.0  # timeout expired, resume
-            else:
-                return
+        if is_chat_paused():
+            return
         if not _keys_down.get(event_name, False):
             _keys_down[event_name] = True
             if _foreground_monitor is not None and _foreground_monitor.is_allowed():

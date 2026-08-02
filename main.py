@@ -21,6 +21,7 @@ if _proj_dir not in sys.path:
 from config import Config
 from foreground_monitor import ForegroundMonitor
 from keyboard_hook import KeyboardHook
+from autoclicker import AutoClicker
 from gui import ConfigGUI
 from tray import TrayIcon
 
@@ -132,6 +133,10 @@ def main():
     hook = KeyboardHook(monitor, config)
     hook.start()
 
+    # --- Start auto-clicker (hold left button to repeat clicks) ---
+    autoclicker = AutoClicker(config, monitor)
+    autoclicker.start()
+
     # --- Create GUI (the "real" tkinter root) ---
     gui = ConfigGUI(config)
 
@@ -157,6 +162,7 @@ def main():
     finally:
         # Graceful shutdown
         tray.stop()
+        autoclicker.stop()
         hook.stop()
         monitor.stop()
 
