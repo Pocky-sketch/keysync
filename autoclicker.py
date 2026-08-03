@@ -132,8 +132,16 @@ def _hook_proc(nCode: int, wParam: int, lParam: int) -> int:
     return _user32.CallNextHookEx(None, nCode, wParam, lParam)
 
 
-def _inject_click():
-    """Inject one left-button click (down+up) via SendInput."""
+def _inject_click(hold_s: float = 0.0):
+    """Inject one left-button click via SendInput, as two separate events.
+
+    down and up are sent in SEPARATE SendInput calls with a hold delay
+    between them. Sending them back-to-back in one call (0 ms apart)
+    fails for semi-automatic weapons: the game never observes a
+    sustained trigger press, and because the physical button stays held,
+    it concludes the trigger was never released → only the first shot
+    fires. A real trigger cycle needs press → hold → release.
+    """
     down = INPUT()
     down.type = INPUT_MOUSE
     down.u.mi.dwFlags = MOUSEEVENTF_LEFTDOWN
@@ -142,8 +150,10 @@ def _inject_click():
     up.type = INPUT_MOUSE
     up.u.mi.dwFlags = MOUSEEVENTF_LEFTUP
 
-    arr = (INPUT * 2)(down, up)
-    _user32.SendInput(2, arr, ctypes.sizeof(INPUT))
+    _user32.SendInput(1, ctypes.byref(down), ctypes.sizeof(INPUT))
+    if hold_s > 0:
+        time.sleep(hold_s)
+    _user32.SendInput(1, ctypes.byref(up), ctypes.sizeof(INPUT))
 
 
 # ------------------------------------------------------------------
@@ -225,10 +235,18 @@ class AutoClicker:
 
     def _click_loop(self):
         interval = max(0.02, self._config.get_autoclick_interval() / 1000.0)
+        # Trigger hold: long enough for the game to register a real press
+        # (>= 1 frame), but short enough not to eat the whole interval.
+        hold = min(0.015, max(0.005, interval * 0.25))
         while self._running:
             try:
                 if self._should_click():
-                    _inject_click()
+                    _inject_click(hold)
+                    # Remaining time = release window: the game must see a
+                    # sustained "button up" before the next press, or
+                    # semi-automatic weapons won't re-fire.
+                    time.sleep(max(0.005, interval - hold))
+                else:
+                    time.sleep(0.01)  # idle poll — respond to release fast
             except Exception:
                 pass
-            time.sleep(interval)

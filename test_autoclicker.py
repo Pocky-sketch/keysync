@@ -7,6 +7,7 @@ import os
 import sys
 import tempfile
 import time
+import ctypes
 
 # ---- mock keyboard_hook 模块 (autoclicker import 它) ----
 import types
@@ -116,8 +117,36 @@ ac3.stop()
 expect("smoke: 重复 start/stop 无异常", True)
 
 # _inject_click 至少不抛异常 (SendInput 调用)
-_inject_click()
-expect("注入: _inject_click 不抛异常", True)
+_inject_click(0.0)
+expect("注入: _inject_click(0.0) 不抛异常", True)
+
+# ---- 注入时序: down/up 分开调用 (半自动武器修复) ----
+import autoclicker
+calls = []
+
+
+def fake_sendinput(n, ptr, size):
+    # 解码 dwFlags 判断 down/up
+    ev = ctypes.cast(ptr, ctypes.POINTER(autoclicker.INPUT)).contents
+    calls.append(ev.u.mi.dwFlags)
+    return n
+
+
+orig_si = autoclicker._user32.SendInput
+autoclicker._user32.SendInput = fake_sendinput
+try:
+    autoclicker._inject_click(0.0)
+finally:
+    autoclicker._user32.SendInput = orig_si
+expect("注入: SendInput 调用 2 次 (down+up 分离)",
+       len(calls) == 2)
+expect("注入: 先 down 后 up",
+       calls[0] == autoclicker.MOUSEEVENTF_LEFTDOWN
+       and calls[1] == autoclicker.MOUSEEVENTF_LEFTUP)
+
+# hold 时间推导
+hold = min(0.015, max(0.005, 0.05 * 0.25))
+expect("注入: hold 推导 (50ms 间隔 → 12.5ms)", abs(hold - 0.0125) < 0.001)
 
 print()
 print("全部通过" if ok else "存在失败项!")
