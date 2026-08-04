@@ -122,6 +122,37 @@ ok &= expect("toggle 关闭: release(b) 被调用", ("release", "b") in fake_cal
 ok &= expect("toggle 关闭: _keys_down 清空", len(kh._keys_down) == 0)
 _on_toggle()  # 重新开启
 
+# --- 场景 6: Shift+Tab 抑制 (Steam 快捷键泄漏) ---
+reset()
+cfg.add_mapping("w", "left shift")  # W → Shift
+_on_key_event(ev("w", "down"))      # 按住 W → 注入 shift
+ok &= expect("抑制: W down 注入 left shift", ("press", "left shift") in fake_calls)
+fake_calls.clear()
+_on_key_event(ev("tab", "down"))    # 按 Tab
+ok &= expect("抑制: Tab down 释放 left shift (防 Shift+Tab)", ("release", "left shift") in fake_calls)
+ok &= expect("抑制: 抑制状态已记录", kh._pending_reinject is not None)
+fake_calls.clear()
+_on_key_event(ev("tab", "up"))      # Tab 松开
+ok &= expect("抑制: Tab up 重新注入 left shift", ("press", "left shift") in fake_calls)
+ok &= expect("抑制: 抑制状态已清除", kh._pending_reinject is None)
+ok &= expect("抑制: _keys_down 恢复", kh._keys_down.get("w", False) is True)
+fake_calls.clear()
+_on_key_event(ev("w", "up"))        # 松开 W
+ok &= expect("抑制: W up 释放 left shift", ("release", "left shift") in fake_calls)
+
+# --- 场景 7: 抑制后 toggle 关闭清理 ---
+reset()
+_on_key_event(ev("w", "down"))
+_on_key_event(ev("tab", "down"))    # 触发抑制
+ok &= expect("抑制+关闭: 抑制状态存在", kh._pending_reinject is not None)
+_on_toggle()  # 关闭同步
+ok &= expect("抑制+关闭: 抑制状态清空", kh._pending_reinject is None and kh._suppress_key is None)
+_on_toggle()  # 重新开启
+
+# 清理: 移除 w 映射 (保持后续测试环境干净)
+cfg.remove_mapping(0)  # w→left shift
+cfg.add_mapping("a", "b")
+
 print()
 print("全部通过" if ok else "存在失败项!")
 sys.exit(0 if ok else 1)

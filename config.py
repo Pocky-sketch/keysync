@@ -40,6 +40,7 @@ class Config:
             "warned_admin": False,
             "autoclick_enabled": False,
             "autoclick_interval": 50,  # ms between clicks while held
+            "autoclick_mode": "click",  # "click" | "hold"
         }
 
         self._has_run_before = os.path.exists(self._path)
@@ -164,6 +165,17 @@ class Config:
             self._data["autoclick_interval"] = max(20, min(500, int(ms)))
             self._save()
 
+    def get_autoclick_mode(self) -> str:
+        """Return "click" (rapid down/up cycles) or "hold" (keep pressed)."""
+        with self._lock:
+            mode = self._data.get("autoclick_mode", "click")
+            return mode if mode in ("click", "hold") else "click"
+
+    def set_autoclick_mode(self, mode: str):
+        with self._lock:
+            self._data["autoclick_mode"] = mode if mode in ("click", "hold") else "click"
+            self._save()
+
     # ------------------------------------------------------------------
     # Public API — key mappings
     # ------------------------------------------------------------------
@@ -255,6 +267,8 @@ class Config:
                 self._data["warned_admin"] = loaded.get("warned_admin", False)
                 self._data["autoclick_enabled"] = loaded.get("autoclick_enabled", False)
                 self._data["autoclick_interval"] = loaded.get("autoclick_interval", 50)
+                mode = loaded.get("autoclick_mode", "click")
+                self._data["autoclick_mode"] = mode if mode in ("click", "hold") else "click"
 
                 # Migrate old format: source_key / target_key → key_mappings
                 if "key_mappings" in loaded:

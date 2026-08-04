@@ -148,6 +148,55 @@ expect("注入: 先 down 后 up",
 hold = min(0.015, max(0.005, 0.05 * 0.25))
 expect("注入: hold 推导 (50ms 间隔 → 12.5ms)", abs(hold - 0.0125) < 0.001)
 
+# ---- hold 模式 (全自动武器) ----
+cfg.set_autoclick_mode("hold")
+expect("配置: mode 往返 hold", cfg.get_autoclick_mode() == "hold")
+cfg.set_autoclick_mode("weird")
+expect("配置: 非法 mode 回退 click", cfg.get_autoclick_mode() == "click")
+cfg.set_autoclick_mode("hold")
+
+ac4 = AutoClicker(cfg, FakeMonitor())
+ac4._running = True
+calls2 = []
+
+
+def fake_si2(n, ptr, size):
+    ev = ctypes.cast(ptr, ctypes.POINTER(autoclicker.INPUT)).contents
+    calls2.append(ev.u.mi.dwFlags)
+    return n
+
+
+autoclicker._user32.SendInput = fake_si2
+try:
+    # 物理按住 + 全部开关开启 → 注入 down 一次并保持
+    autoclicker._pressed = True
+    ac4._hold_cycle()
+    ac4._hold_cycle()  # 再跑一次不应重复注入
+    expect("hold: 按住注入 LEFT DOWN 一次", calls2.count(autoclicker.MOUSEEVENTF_LEFTDOWN) == 1)
+    expect("hold: 保持状态已记录", autoclicker._injected_down is True)
+
+    # 松开 → 注入 up
+    autoclicker._pressed = False
+    ac4._hold_cycle()
+    expect("hold: 松开注入 LEFT UP", calls2.count(autoclicker.MOUSEEVENTF_LEFTUP) == 1)
+    expect("hold: 保持状态清除", autoclicker._injected_down is False)
+
+    # 再按 → 再次注入 down
+    autoclicker._pressed = True
+    ac4._hold_cycle()
+    expect("hold: 再次按住注入 down", calls2.count(autoclicker.MOUSEEVENTF_LEFTDOWN) == 2)
+
+    # stop 释放
+    ac4._running = False
+    ac4.stop()
+    expect("hold: stop 释放 LEFT UP", calls2.count(autoclicker.MOUSEEVENTF_LEFTUP) == 2)
+finally:
+    autoclicker._user32.SendInput = orig_si
+    autoclicker._pressed = False
+    autoclicker._injected_down = False
+
+cfg.set_autoclick_mode("click")
+
 print()
 print("全部通过" if ok else "存在失败项!")
 sys.exit(0 if ok else 1)

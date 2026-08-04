@@ -108,6 +108,7 @@ _user32.SendInput.argtypes = [
 # read by the click thread. Plain attribute access is atomic enough for
 # a bool under CPython.
 _pressed = False
+_injected_down = False  # hold mode: whether we're currently holding LEFT DOWN
 
 _HOOKPROC = ctypes.WINFUNCTYPE(
     ctypes.c_long, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM,
@@ -132,6 +133,22 @@ def _hook_proc(nCode: int, wParam: int, lParam: int) -> int:
     return _user32.CallNextHookEx(None, nCode, wParam, lParam)
 
 
+def _inject_down():
+    """Inject LEFT DOWN only (used by hold mode to keep the button pressed)."""
+    down = INPUT()
+    down.type = INPUT_MOUSE
+    down.u.mi.dwFlags = MOUSEEVENTF_LEFTDOWN
+    _user32.SendInput(1, ctypes.byref(down), ctypes.sizeof(INPUT))
+
+
+def _inject_up():
+    """Inject LEFT UP only (used by hold mode to release)."""
+    up = INPUT()
+    up.type = INPUT_MOUSE
+    up.u.mi.dwFlags = MOUSEEVENTF_LEFTUP
+    _user32.SendInput(1, ctypes.byref(up), ctypes.sizeof(INPUT))
+
+
 def _inject_click(hold_s: float = 0.0):
     """Inject one left-button click via SendInput, as two separate events.
 
@@ -142,18 +159,10 @@ def _inject_click(hold_s: float = 0.0):
     it concludes the trigger was never released → only the first shot
     fires. A real trigger cycle needs press → hold → release.
     """
-    down = INPUT()
-    down.type = INPUT_MOUSE
-    down.u.mi.dwFlags = MOUSEEVENTF_LEFTDOWN
-
-    up = INPUT()
-    up.type = INPUT_MOUSE
-    up.u.mi.dwFlags = MOUSEEVENTF_LEFTUP
-
-    _user32.SendInput(1, ctypes.byref(down), ctypes.sizeof(INPUT))
+    _inject_down()
     if hold_s > 0:
         time.sleep(hold_s)
-    _user32.SendInput(1, ctypes.byref(up), ctypes.sizeof(INPUT))
+    _inject_up()
 
 
 # ------------------------------------------------------------------
@@ -185,7 +194,16 @@ class AutoClicker:
         self._click_thread.start()
 
     def stop(self):
+        global _injected_down
         self._running = False
+        # Release any held-down injection (hold mode) so the game doesn't
+        # get a stuck button.
+        if _injected_down:
+            try:
+                _inject_up()
+            except Exception:
+                pass
+            _injected_down = False
         if self._thread and self._thread.is_alive():
             # Wake the message loop so the hook thread can exit.
             _user32.PostThreadMessageW(self._thread.ident, WM_QUIT, 0, 0)
@@ -240,7 +258,9 @@ class AutoClicker:
         hold = min(0.015, max(0.005, interval * 0.25))
         while self._running:
             try:
-                if self._should_click():
+                if self._config.get_autoclick_mode() == "hold":
+                    self._hold_cycle()
+                elif self._should_click():
                     _inject_click(hold)
                     # Remaining time = release window: the game must see a
                     # sustained "button up" before the next press, or
@@ -250,3 +270,23 @@ class AutoClicker:
                     time.sleep(0.01)  # idle poll — respond to release fast
             except Exception:
                 pass
+
+    def _hold_cycle(self):
+        """Hold mode: mirror the physical button press.
+
+        Physical down → inject a held LEFT DOWN (and keep it); physical
+        up → inject LEFT UP. No down/up cycling, so full-auto weapons
+        keep their natural fire rate instead of being chopped by rapid
+        re-triggers.
+        """
+        global _injected_down
+        if self._should_click():
+            if not _injected_down:
+                _inject_down()
+                _injected_down = True
+            time.sleep(0.01)
+        else:
+            if _injected_down:
+                _inject_up()
+                _injected_down = False
+            time.sleep(0.01)

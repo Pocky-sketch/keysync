@@ -222,7 +222,7 @@ class ConfigGUI:
                         checkmark_color=WHITE, border_color=PINK_BORDER,
                         ).pack(pady=(0, 4))
 
-        # --- Auto-click toggle + interval ---
+        # --- Auto-click toggle + interval + mode ---
         auto_row = ctk.CTkFrame(self._root, fg_color="transparent")
         auto_row.pack(pady=(0, 4))
         self._autoclick_var = tk.BooleanVar(value=self._config.is_autoclick_enabled())
@@ -234,6 +234,13 @@ class ConfigGUI:
                         text_color=PLUM, font=("Segoe UI", 10),
                         checkmark_color=WHITE, border_color=PINK_BORDER,
                         ).pack(side=tk.LEFT)
+        self._autoclick_mode_btn = ctk.CTkButton(
+            auto_row, width=56, height=24,
+            fg_color=PINK_BTN, hover_color=PINK_HOVER,
+            text_color=ROSE, corner_radius=12,
+            command=self._on_toggle_autoclick_mode,
+        )
+        self._autoclick_mode_btn.pack(side=tk.RIGHT, padx=2)
         ctk.CTkButton(auto_row, text="间隔", width=56, height=24,
                       fg_color=PINK_BTN, hover_color=PINK_HOVER,
                       text_color=ROSE, corner_radius=12,
@@ -334,6 +341,27 @@ class ConfigGUI:
             except ValueError:
                 from tkinter import messagebox
                 messagebox.showinfo("提示", "请输入数字（毫秒）。")
+
+    def _on_toggle_autoclick_mode(self):
+        """Switch between click (rapid cycles) and hold (keep pressed)."""
+        mode = self._config.get_autoclick_mode()
+        new_mode = "hold" if mode == "click" else "click"
+        self._config.set_autoclick_mode(new_mode)
+        self._update_autoclick_mode_btn()
+
+    def _update_autoclick_mode_btn(self):
+        mode = self._config.get_autoclick_mode()
+        if mode == "hold":
+            text = "按住"
+            tip = "按住模式：适合全自动武器（保持开火不降速）"
+        else:
+            text = "连点"
+            tip = "连点模式：适合半自动武器（快速扣扳机）"
+        self._autoclick_mode_btn.configure(text=text)
+        try:
+            self._autoclick_mode_btn.configure(tooltip=tip)
+        except Exception:
+            pass
 
     # ── Key mapping handlers ────────────────────────────────────────
 
@@ -443,6 +471,7 @@ class ConfigGUI:
         self._enabled_var.set(self._config.is_enabled())
         self._typing_pause_var.set(self._config.is_typing_pause())
         self._autoclick_var.set(self._config.is_autoclick_enabled())
+        self._update_autoclick_mode_btn()
 
     def _get_selected_app_name(self):
         sel = self._app_listbox.curselection()

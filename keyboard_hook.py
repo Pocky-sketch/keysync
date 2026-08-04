@@ -25,6 +25,12 @@ _keys_down: dict[str, bool] = {}
 _chat_paused_until: float = 0.0
 _CHAT_TIMEOUT = 15.0  # auto-resume after idle
 
+# Inject-suppression state: when the user presses a chord key (e.g. Tab)
+# while we hold an injected key, we release the injected key and
+# remember it here; when the user releases the chord key, we re-press.
+_pending_reinject: dict | None = None  # {source: target} to re-press
+_suppress_key: str | None = None       # the key that triggered suppression
+
 # Toggle hotkey
 _toggle_hotkey_handler = None
 
@@ -53,7 +59,7 @@ def is_chat_paused() -> bool:
 # ------------------------------------------------------------------
 
 def _on_key_event(event: keyboard.KeyboardEvent):
-    global _keys_down, _chat_paused_until
+    global _keys_down, _chat_paused_until, _pending_reinject, _suppress_key
 
     if _config is None:
         return
@@ -66,9 +72,27 @@ def _on_key_event(event: keyboard.KeyboardEvent):
         return
 
     event_name = event.name.lower()
+    is_down = event.event_type == keyboard.KEY_DOWN
+
+    # --- Re-inject after suppression: the chord key (e.g. Tab) is up,
+    # so restore the injected keys we released. Do this BEFORE chat-pause
+    # handling so the injected hold is restored as quickly as possible.
+    if not is_down and _pending_reinject and event_name == _suppress_key:
+        saved = _pending_reinject
+        _pending_reinject = None
+        _suppress_key = None
+        for source, target in saved.items():
+            _keys_down[source] = True
+            if (_foreground_monitor is not None
+                    and _foreground_monitor.is_allowed()):
+                try:
+                    keyboard.press(target)
+                except Exception:
+                    pass
+        return
 
     # --- Chat-key detection (only when typing-pause is enabled) ---
-    if _config.is_typing_pause() and event.event_type == keyboard.KEY_DOWN:
+    if _config.is_typing_pause() and is_down:
         fg_name = _foreground_monitor.get_foreground_name() if _foreground_monitor else ""
         chat_keys = set(_config.get_chat_keys(fg_name)) if fg_name else set()
 
@@ -87,6 +111,39 @@ def _on_key_event(event: keyboard.KeyboardEvent):
         # is_chat_paused() so the pause can't be re-armed forever.
         if is_chat_paused():
             _chat_paused_until = time.time() + _CHAT_TIMEOUT
+
+    # --- Inject-in-progress guard: suppress OS shortcuts like Shift+Tab
+    # (Steam overlay) while we hold a mapped target key. When the user
+    # presses a key whose chord could leak into an injected modifier,
+    # release the injected key until the user's key is up again.
+    # Runs AFTER chat-key detection so chat keys (e.g. Enter) are never
+    # swallowed by this guard, and is skipped while chat-paused.
+    if is_down and _keys_down and not is_chat_paused():
+        injected = {m["target"] for m in mappings if m["source"] in _keys_down}
+        suppress_after = {
+            "tab", "esc", "space", "enter", "f1", "f2", "f3", "f4", "f5",
+            "f6", "f7", "f8", "f9", "f10", "f11", "f12",
+            "left", "right", "up", "down",
+            "alt", "left alt", "right alt", "ctrl", "left ctrl", "right ctrl",
+            "left windows", "right windows", "win", "menu",
+        }
+        if event_name in suppress_after and injected:
+            # User pressed a chord-key while we hold injected keys —
+            # release them so the app sees a clean key (no Shift+Tab),
+            # and remember to re-press on the user's key-up.
+            _pending_reinject = {
+                m["source"]: m["target"]
+                for m in mappings if m["source"] in _keys_down
+            }
+            _suppress_key = event_name
+            for m in mappings:
+                if m["source"] in _keys_down:
+                    try:
+                        keyboard.release(m["target"])
+                    except Exception:
+                        pass
+                    _keys_down[m["source"]] = False
+            return
 
     # --- Process mappings ---
     source_to_target = {m["source"]: m["target"] for m in mappings}
@@ -118,10 +175,12 @@ def _on_key_event(event: keyboard.KeyboardEvent):
 # ------------------------------------------------------------------
 
 def _on_toggle():
-    global _keys_down
+    global _keys_down, _pending_reinject, _suppress_key
     if _config is not None:
         new_state = _config.toggle_enabled()
         if not new_state:
+            _pending_reinject = None
+            _suppress_key = None
             # Sync disabled — release every key we may have injected,
             # otherwise the target key stays stuck until re-enabled.
             for m in _config.get_mappings():
@@ -166,8 +225,10 @@ class KeyboardHook:
             pass
 
     def stop(self):
-        global _toggle_hotkey_handler, _chat_paused_until
+        global _toggle_hotkey_handler, _chat_paused_until, _pending_reinject, _suppress_key
         self._running = False
+        _pending_reinject = None
+        _suppress_key = None
 
         if _toggle_hotkey_handler is not None:
             try:
