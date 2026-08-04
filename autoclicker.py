@@ -120,6 +120,11 @@ _injected_down = False  # hold mode: whether we're currently holding LEFT DOWN
 # instance access) can read the hotkey setting.
 _config: Config | None = None
 
+# Optional callback invoked after toggle_from_hotkey changes the
+# auto-click enabled state. Set by main.py to the GUI's thread-safe
+# notifier so the UI stays in sync when the hotkey toggles it.
+_config_change_cb = None
+
 _HOOKPROC = ctypes.WINFUNCTYPE(
     ctypes.c_long, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM,
 )
@@ -176,6 +181,11 @@ def toggle_from_hotkey():
         except Exception:
             pass
         _injected_down = False
+    if _config_change_cb:
+        try:
+            _config_change_cb()
+        except Exception:
+            pass
 
 
 def _inject_down():

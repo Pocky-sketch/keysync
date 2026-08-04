@@ -226,6 +226,7 @@ _kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
 _config: Config | None = None
 _show_callback = None  # callable to show/hide config window
 _quit_callback = None  # callable to quit the whole app (tk mainloop)
+_config_change_cb = None  # callable() after enable toggled from tray menu
 _tray_wndproc_holder = None  # keep WNDPROC alive (ctypes GC guard)
 
 
@@ -351,6 +352,11 @@ def _tray_wndproc(hwnd, msg, wParam, lParam):
         elif cmd == ID_TOGGLE_ENABLE:
             if _config:
                 _config.toggle_enabled()
+                if _config_change_cb:
+                    try:
+                        _config_change_cb()
+                    except Exception:
+                        pass
         elif cmd == ID_QUIT:
             # Quit must also stop the tk mainloop on the main thread —
             # otherwise only the tray thread dies and the process becomes

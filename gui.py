@@ -138,6 +138,32 @@ class ConfigGUI:
             return int(hwnd)
         return int(self._root.winfo_id())  # fallback
 
+    def notify_config_changed(self):
+        """Thread-safe: schedule a UI state refresh from the main thread.
+
+        Called from hotkey threads / tray when the config changed behind
+        the GUI's back (e.g. hotkey toggled auto-click, Pause toggled
+        sync, tray menu toggled enable). tkinter is NOT thread-safe, so
+        we never touch widgets here — root.after(0, ...) is one of the
+        few thread-safe tkinter calls and runs the refresh on the
+        mainloop thread.
+        """
+        try:
+            self._root.after(0, self._sync_ui_state)
+        except Exception:
+            pass  # window gone / mainloop not running — nothing to sync
+
+    def _sync_ui_state(self):
+        """Refresh checkbox/button states from config (main thread only)."""
+        try:
+            self._enabled_var.set(self._config.is_enabled())
+            self._typing_pause_var.set(self._config.is_typing_pause())
+            self._autoclick_var.set(self._config.is_autoclick_enabled())
+            self._update_autoclick_mode_btn()
+            self._update_autoclick_hotkey_btn()
+        except Exception:
+            pass  # widget destroyed mid-refresh
+
     def quit(self):
         self._root.quit()
         self._root.destroy()

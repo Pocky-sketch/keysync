@@ -164,6 +164,15 @@ def main():
     # --- Create GUI (the "real" tkinter root) ---
     gui = ConfigGUI(config, on_hotkey_changed=hook.refresh_autoclick_hotkey)
 
+    # Config changes made behind the GUI's back (Pause hotkey, auto-click
+    # hotkey, tray menu) → thread-safe GUI refresh so checkboxes/buttons
+    # never drift from the real state.
+    import keyboard_hook as _kh
+    import autoclicker as _ac
+    _kh._config_change_cb = gui.notify_config_changed
+    _ac._config_change_cb = gui.notify_config_changed
+    tray._config_change_cb = gui.notify_config_changed
+
     # --- Create tray icon ---
     def toggle_gui():
         if gui.is_visible():

@@ -42,6 +42,11 @@ _toggle_hotkey_handler = None
 # handled by the AutoClicker's own mouse hook)
 _autoclick_hotkey_handler = None
 
+# Optional callback invoked after _on_toggle changes the enabled state.
+# Set by main.py to the GUI's thread-safe notifier so the UI stays in
+# sync when the Pause hotkey toggles sync.
+_config_change_cb = None
+
 
 # ------------------------------------------------------------------
 # Chat-pause state
@@ -151,6 +156,11 @@ def _on_toggle():
                 except Exception:
                     pass
             _keys_down = {}
+        if _config_change_cb:
+            try:
+                _config_change_cb()
+            except Exception:
+                pass
 
 
 def _on_autoclick_toggle():

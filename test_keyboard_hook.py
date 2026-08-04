@@ -120,7 +120,16 @@ fake_calls.clear()
 _on_toggle()  # 关闭同步
 ok &= expect("toggle 关闭: release(b) 被调用", ("release", "b") in fake_calls)
 ok &= expect("toggle 关闭: _keys_down 清空", len(kh._keys_down) == 0)
-_on_toggle()  # 重新开启
+
+# toggle 后触发 _config_change_cb (GUI 同步通知)
+cb_calls = []
+kh._config_change_cb = lambda: cb_calls.append(1)
+_on_toggle()  # 再 toggle (重新开启)
+ok &= expect("toggle: 触发 config_change_cb", len(cb_calls) == 1)
+kh._config_change_cb = None
+_on_toggle()  # 恢复关闭状态? 不 — 上面 toggle 后是开, 再 toggle 回关
+ok &= expect("toggle 恢复: 关闭同步", kh._config.is_enabled() is False)
+_on_toggle()  # 重新开启, 保持测试环境一致
 
 # --- 场景 6: 映射源 W→Shift 正常注入与释放 (无抑制逻辑) ---
 reset()

@@ -244,6 +244,13 @@ try:
     expect("热键: f9 触发 toggle 开", cfg.is_autoclick_enabled() is True)
     ac_mod.toggle_from_hotkey()
     expect("热键: f9 触发 toggle 关", cfg.is_autoclick_enabled() is False)
+
+    # toggle 后触发 _config_change_cb (GUI 同步通知)
+    cb_calls = []
+    ac_mod._config_change_cb = lambda: cb_calls.append(1)
+    ac_mod.toggle_from_hotkey()
+    expect("热键: toggle 触发 config_change_cb", len(cb_calls) == 1)
+    ac_mod._config_change_cb = None
 finally:
     autoclicker._user32.SendInput = orig_si
     autoclicker._injected_down = False
