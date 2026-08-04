@@ -69,29 +69,32 @@ def is_chat_paused() -> bool:
 def _on_key_event(event: keyboard.KeyboardEvent):
     """Hook callback wrapper — the real logic lives in _on_key_event_impl.
 
-    With suppress=True the callback can block events by returning False.
-    Any exception must release the event (return None) — a broken hook
-    must never freeze the user's keyboard.
+    CRITICAL: this is a BLOCKING hook (suppress=True). keyboard 0.13.5
+    does `if not all(hook(e) for hook in blocking_hooks): return False`,
+    so the callback MUST return a truthy value to let an event through —
+    a bare `return` (None) or an exception swallows the key and blocks
+    the whole keyboard. Only the suppression branch returns False
+    (intentional swallow); every other path returns True.
     """
     try:
         return _on_key_event_impl(event)
     except Exception:
-        return None  # fail-open: pass the event through
+        return True  # fail-open: pass the event through (never None!)
 
 
 def _on_key_event_impl(event: keyboard.KeyboardEvent):
     global _keys_down, _chat_paused_until, _pending_reinject, _suppress_key, _resend_key, _resend_until
 
     if _config is None:
-        return
+        return True
 
     if not _config.is_enabled():
-        return
+        return True
 
     # Events we injected ourselves (re-inject / re-send) must pass
     # through untouched — otherwise we'd loop or swallow our own keys.
     if getattr(event, "is_injected", False):
-        return
+        return True
 
     event_name = event.name.lower()
     is_down = event.event_type == keyboard.KEY_DOWN
@@ -103,11 +106,11 @@ def _on_key_event_impl(event: keyboard.KeyboardEvent):
     if (is_down and _resend_key is not None
             and event_name == _resend_key and time.time() < _resend_until):
         _resend_key = None
-        return
+        return True
 
     mappings = _config.get_mappings()
     if not mappings:
-        return
+        return True
 
     # --- Re-inject after suppression: the chord key (e.g. Tab) is up,
     # so restore the injected keys we released. Only restore sources
@@ -132,7 +135,7 @@ def _on_key_event_impl(event: keyboard.KeyboardEvent):
                         pass
             else:
                 _keys_down[source] = False
-        return
+        return True
 
     # --- Chat-key detection (only when typing-pause is enabled) ---
     if _config.is_typing_pause() and is_down:
@@ -142,12 +145,12 @@ def _on_key_event_impl(event: keyboard.KeyboardEvent):
         # Pressing a chat key while paused → resume (e.g. Enter sends chat)
         if _chat_paused_until > 0 and event_name in chat_keys:
             _chat_paused_until = 0.0
-            return  # don't process this key as a mapping
+            return True  # don't process this key as a mapping
 
         # Pressing a chat key while not paused → pause sync
         if _chat_paused_until == 0.0 and chat_keys and event_name in chat_keys:
             _chat_paused_until = time.time() + _CHAT_TIMEOUT
-            return  # don't process this key as a mapping
+            return True  # don't process this key as a mapping
 
         # While paused (and still within timeout), any key extends it —
         # typing keeps the pause alive. Expired pauses are cleared by
@@ -209,18 +212,19 @@ def _on_key_event_impl(event: keyboard.KeyboardEvent):
     source_to_target = {m["source"]: m["target"] for m in mappings}
 
     if event_name not in source_to_target:
-        return
+        return True
 
     target_key = source_to_target[event_name]
 
     if event.event_type == keyboard.KEY_DOWN:
         # Chat-pause gate: while paused (within timeout), don't inject.
         if is_chat_paused():
-            return
+            return True
         if not _keys_down.get(event_name, False):
             _keys_down[event_name] = True
             if _foreground_monitor is not None and _foreground_monitor.is_allowed():
                 keyboard.press(target_key)
+        return True  # ALWAYS truthy — blocking hook swallows falsy returns
 
     elif event.event_type == keyboard.KEY_UP:
         # If this source key is in the suppression restore list, the user
@@ -233,6 +237,7 @@ def _on_key_event_impl(event: keyboard.KeyboardEvent):
             # Always release keys we injected, even if chat-paused or the
             # foreground app changed — otherwise the target key stays stuck.
             keyboard.release(target_key)
+        return True  # ALWAYS truthy — blocking hook swallows falsy returns
 
 
 # ------------------------------------------------------------------

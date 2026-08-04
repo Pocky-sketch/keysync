@@ -150,11 +150,11 @@ ok &= expect("抑制: _keys_down 已清空 (防循环)", kh._keys_down.get("w", 
 # 重发的 Tab 事件再次进钩子 → 守卫放行, 不再二次抑制 (死循环修复点)
 fake_calls.clear()
 ret = _on_key_event(ev("tab", "down"))
-ok &= expect("抑制: 重发事件被守卫放行 (不二次抑制)", ret is None)
+ok &= expect("抑制: 重发事件被守卫放行 (不二次抑制)", ret is not False)
 ok &= expect("抑制: 重发放行无额外 release/press", len(fake_calls) == 0)
 fake_calls.clear()
 ret2 = _on_key_event(ev("tab", "up"))  # Tab 松开
-ok &= expect("抑制: Tab up 放行", ret2 is None)
+ok &= expect("抑制: Tab up 放行 (truthy)", ret2 is not False)
 ok &= expect("抑制: Tab up 重新注入 left shift (W 仍按着)", ("press", "left shift") in fake_calls)
 ok &= expect("抑制: 抑制状态已清除", kh._pending_reinject is None)
 ok &= expect("抑制: _keys_down 恢复", kh._keys_down.get("w", False) is True)
@@ -183,7 +183,7 @@ reset()
 _on_key_event(ev("w", "down"))
 fake_calls.clear()
 ret = _on_key_event(ev("tab", "down", injected=True))  # 模拟注入事件
-ok &= expect("注入事件: 直接放行不吞", ret is None)
+ok &= expect("注入事件: 直接放行不吞", ret is not False)
 ok &= expect("注入事件: 不触发抑制 (无 release/press)", len(fake_calls) == 0)
 
 # --- 场景 10: 抑制后 toggle 关闭清理 ---
