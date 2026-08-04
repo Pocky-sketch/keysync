@@ -177,8 +177,12 @@ _user32.GetCursorPos.restype = wintypes.BOOL
 _user32.GetCursorPos.argtypes = [ctypes.POINTER(POINT)]
 
 # Icon creation
+# LoadIconW's 2nd arg is LPCTSTR: either a name string OR a
+# MAKEINTRESOURCE id (a pointer-sized integer). Using LPCWSTR in
+# argtypes makes ctypes reject the c_void_p(MAKEINTRESOURCE) call;
+# c_void_p accepts both ints and strings transparently.
 _user32.LoadIconW.restype = wintypes.HICON
-_user32.LoadIconW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR]
+_user32.LoadIconW.argtypes = [wintypes.HINSTANCE, ctypes.c_void_p]
 
 _user32.GetDC.restype = wintypes.HDC
 _user32.GetDC.argtypes = [wintypes.HWND]
@@ -250,8 +254,9 @@ def _create_simple_icon() -> wintypes.HICON:
     except Exception:
         pass
 
-    # Fallback: use the standard application icon
-    icon = _user32.LoadIconW(None, ctypes.c_void_p(IDI_APPLICATION))
+    # Fallback: use the standard application icon (MAKEINTRESOURCE id —
+    # passed as an int, c_void_p argtype accepts it)
+    icon = _user32.LoadIconW(None, IDI_APPLICATION)
     if icon:
         return icon
     return wintypes.HICON(0)

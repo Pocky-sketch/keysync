@@ -171,7 +171,6 @@ def main():
     import autoclicker as _ac
     _kh._config_change_cb = gui.notify_config_changed
     _ac._config_change_cb = gui.notify_config_changed
-    tray._config_change_cb = gui.notify_config_changed
 
     # --- Create tray icon ---
     def toggle_gui():
@@ -182,6 +181,7 @@ def main():
 
     tray = TrayIcon(config, toggle_gui, on_quit=_make_tray_quit(gui))
     tray.start()
+    tray._config_change_cb = gui.notify_config_changed
 
     # --- Show GUI on first run ---
     if not config.has_run_before():
