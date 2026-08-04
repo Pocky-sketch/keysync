@@ -159,7 +159,6 @@ class ConfigGUI:
             self._enabled_var.set(self._config.is_enabled())
             self._typing_pause_var.set(self._config.is_typing_pause())
             self._autoclick_var.set(self._config.is_autoclick_enabled())
-            self._update_autoclick_mode_btn()
             self._update_autoclick_hotkey_btn()
         except Exception:
             pass  # widget destroyed mid-refresh
@@ -254,7 +253,7 @@ class ConfigGUI:
                         checkmark_color=WHITE, border_color=PINK_BORDER,
                         ).pack(pady=(0, 4))
 
-        # --- Auto-click toggle + interval + mode ---
+        # --- Auto-click toggle + settings ---
         auto_row = ctk.CTkFrame(self._root, fg_color="transparent")
         auto_row.pack(pady=(0, 4))
         self._autoclick_var = tk.BooleanVar(value=self._config.is_autoclick_enabled())
@@ -266,17 +265,10 @@ class ConfigGUI:
                         text_color=PLUM, font=("Segoe UI", 10),
                         checkmark_color=WHITE, border_color=PINK_BORDER,
                         ).pack(side=tk.LEFT)
-        self._autoclick_mode_btn = ctk.CTkButton(
-            auto_row, width=56, height=24,
-            fg_color=PINK_BTN, hover_color=PINK_HOVER,
-            text_color=ROSE, corner_radius=12,
-            command=self._on_toggle_autoclick_mode,
-        )
-        self._autoclick_mode_btn.pack(side=tk.RIGHT, padx=2)
-        ctk.CTkButton(auto_row, text="间隔", width=56, height=24,
+        ctk.CTkButton(auto_row, text="设置", width=56, height=24,
                       fg_color=PINK_BTN, hover_color=PINK_HOVER,
                       text_color=ROSE, corner_radius=12,
-                      command=self._on_set_autoclick_interval
+                      command=self._on_autoclick_settings
                       ).pack(side=tk.RIGHT, padx=2)
 
         # --- Auto-click hotkey row ---
@@ -379,38 +371,84 @@ class ConfigGUI:
     def _on_toggle_autoclick(self):
         self._config.set_autoclick_enabled(self._autoclick_var.get())
 
-    def _on_set_autoclick_interval(self):
-        current = self._config.get_autoclick_interval()
-        dialog = ctk.CTkInputDialog(
-            text=f"连点间隔（毫秒，20~500）：\n当前 {current} ms\n数值越小点击越快",
-            title=f"{HEART} 连点间隔",
+    def _on_autoclick_settings(self):
+        """Open the auto-click settings dialog: interval + mode.
+
+        The mode (click/hold) moved here from the main window — the
+        main UI keeps only the toggle checkbox and the hotkey row.
+        """
+        dlg = ctk.CTkToplevel(self._root)
+        dlg.title(f"{HEART} 连点设置")
+        dlg.geometry("320x250")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+        dlg.configure(fg_color=PINK_BG)
+
+        dlg.update_idletasks()
+        px, py = self._root.winfo_x(), self._root.winfo_y()
+        pw, ph = self._root.winfo_width(), self._root.winfo_height()
+        dlg.geometry(f"+{px + (pw - 320) // 2}+{py + (ph - 250) // 2}")
+
+        ctk.CTkLabel(dlg, text="连点设置",
+                     text_color=ROSE, font=("Segoe UI", 12, "bold"),
+                     ).pack(pady=(16, 8))
+
+        # Interval
+        ctk.CTkLabel(dlg, text="连点间隔（毫秒，20~500）：",
+                     text_color=PLUM, font=("Segoe UI", 10),
+                     ).pack(pady=(4, 2))
+        interval_var = tk.StringVar(
+            value=str(self._config.get_autoclick_interval()))
+        ctk.CTkEntry(dlg, textvariable=interval_var, width=140,
+                     justify="center", font=("Consolas", 11),
+                     fg_color=WHITE, text_color=PLUM,
+                     border_color=PINK_BORDER, corner_radius=8,
+                     ).pack(pady=(0, 10))
+
+        # Mode
+        ctk.CTkLabel(dlg, text="模式：",
+                     text_color=PLUM, font=("Segoe UI", 10),
+                     ).pack(pady=(4, 2))
+        mode_var = tk.StringVar(
+            value="按住" if self._config.get_autoclick_mode() == "hold" else "连点")
+        mode_menu = ctk.CTkOptionMenu(
+            dlg, values=["连点", "按住"], variable=mode_var,
+            width=140, fg_color=PINK_BTN, button_color=PINK_HOVER,
+            text_color=ROSE, corner_radius=8,
         )
-        val = dialog.get_input()
-        if val:
+        mode_menu.pack(pady=(0, 6))
+        ctk.CTkLabel(dlg,
+                     text="连点：适合半自动武器\n按住：适合全自动武器（不降射速）",
+                     text_color=LIGHT, font=("Segoe UI", 9),
+                     justify="center").pack(pady=(0, 8))
+
+        def on_save():
             try:
-                self._config.set_autoclick_interval(int(val.strip()))
+                ms = int(interval_var.get().strip())
+                self._config.set_autoclick_interval(ms)
             except ValueError:
                 from tkinter import messagebox
-                messagebox.showinfo("提示", "请输入数字（毫秒）。")
+                messagebox.showinfo("提示", "间隔请输入数字（毫秒）。")
+                return
+            mode = "hold" if mode_var.get() == "按住" else "click"
+            self._config.set_autoclick_mode(mode)
+            dlg.destroy()
 
-    def _on_toggle_autoclick_mode(self):
-        """Switch between click (rapid cycles) and hold (keep pressed)."""
-        mode = self._config.get_autoclick_mode()
-        new_mode = "hold" if mode == "click" else "click"
-        self._config.set_autoclick_mode(new_mode)
-        self._update_autoclick_mode_btn()
+        btn_row = ctk.CTkFrame(dlg, fg_color="transparent")
+        btn_row.pack(pady=(4, 0))
+        ctk.CTkButton(btn_row, text="♡ 保存", command=on_save,
+                      fg_color=PINK_BTN, hover_color=PINK_HOVER,
+                      text_color=ROSE, corner_radius=13,
+                      ).pack(side=tk.LEFT, padx=4)
+        ctk.CTkButton(btn_row, text="取消", command=dlg.destroy,
+                      fg_color=PINK_BTN, hover_color=PINK_HOVER,
+                      text_color=ROSE, corner_radius=13,
+                      ).pack(side=tk.LEFT, padx=4)
 
-    def _update_autoclick_mode_btn(self):
-        mode = self._config.get_autoclick_mode()
-        if mode == "hold":
-            text = "按住"
-            tip = "按住模式：适合全自动武器（保持开火不降速）"
-        else:
-            text = "连点"
-            tip = "连点模式：适合半自动武器（快速扣扳机）"
-        self._autoclick_mode_btn.configure(text=text)
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
+        interval_entry = dlg.winfo_children()[-1]
         try:
-            self._autoclick_mode_btn.configure(tooltip=tip)
+            interval_entry.focus_set()
         except Exception:
             pass
 
@@ -663,7 +701,6 @@ class ConfigGUI:
         self._enabled_var.set(self._config.is_enabled())
         self._typing_pause_var.set(self._config.is_typing_pause())
         self._autoclick_var.set(self._config.is_autoclick_enabled())
-        self._update_autoclick_mode_btn()
         self._update_autoclick_hotkey_btn()
 
     def _get_selected_app_name(self):
