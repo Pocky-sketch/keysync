@@ -1,5 +1,5 @@
 """
-keyboard_hook.py — Global keyboard hook + key injection for KeySync.
+keyboard_hook.py — Global keyboard hook + key injection for 按键同步.
 
 - Multiple source→target key mappings
 - Chat-key pause: per-app chat keys trigger pause; any key extends timeout;

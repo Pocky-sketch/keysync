@@ -376,7 +376,7 @@ def _show_context_menu(hwnd):
     _user32.AppendMenuW(hmenu, MF_STRING, ID_SHOW_CONFIG, "显示配置窗口")
     _user32.AppendMenuW(hmenu, MF_STRING | check, ID_TOGGLE_ENABLE, "启用同步")
     _user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
-    _user32.AppendMenuW(hmenu, MF_STRING, ID_QUIT, "退出 KeySync")
+    _user32.AppendMenuW(hmenu, MF_STRING, ID_QUIT, "退出按键同步")
 
     # Show at cursor position
     pt = POINT()
@@ -452,25 +452,25 @@ class TrayIcon:
         _tray_wndproc_holder = WNDPROC(_tray_wndproc)
         wc.lpfnWndProc = ctypes.cast(_tray_wndproc_holder, ctypes.c_void_p)
         wc.hInstance = _kernel32.GetModuleHandleW(None)
-        wc.lpszClassName = "KeySyncTrayClass"
+        wc.lpszClassName = "KeysyncTrayClass"
         wc.hbrBackground = _gdi32.CreateSolidBrush(
             _user32.GetSysColor(1)
         )  # COLOR_BACKGROUND
 
         atom = _user32.RegisterClassExW(ctypes.byref(wc))
         if not atom:
-            print("[KeySync] ERROR: RegisterClassExW failed")
+            print("[按键同步] ERROR: RegisterClassExW failed")
             return
 
         # 2. Create message-only window (HWND_MESSAGE = -3)
         HWND_MESSAGE = wintypes.HWND(-3)
         self._hwnd = _user32.CreateWindowExW(
-            0, "KeySyncTrayClass", "KeySyncTray", 0,
+            0, "KeysyncTrayClass", "KeysyncTray", 0,
             0, 0, 0, 0, HWND_MESSAGE, None,
             _kernel32.GetModuleHandleW(None), None,
         )
         if not self._hwnd:
-            print("[KeySync] ERROR: CreateWindowExW failed")
+            print("[按键同步] ERROR: CreateWindowExW failed")
             return
 
         # 3. Add tray icon

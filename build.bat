@@ -11,7 +11,7 @@ echo [1/2] 安装依赖...
 python -m pip install -r requirements.txt --quiet
 
 echo [2/2] 打包中...
-python -m PyInstaller KeySync.spec --clean --noconfirm
+python -m PyInstaller 按键同步.spec --clean --noconfirm
 
 if %ERRORLEVEL% EQU 0 (
     echo.

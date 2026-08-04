@@ -1,5 +1,5 @@
 """
-process_picker.py — Graphical process selection for KeySync.
+process_picker.py — Graphical process selection for 按键同步.
 
 Provides two ways to pick a process:
 1. ProcessListDialog — a searchable list of all running processes

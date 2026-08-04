@@ -1,5 +1,5 @@
 """
-autoclicker.py — Hold-to-repeat auto-clicker for KeySync.
+autoclicker.py — Hold-to-repeat auto-clicker for 按键同步.
 
 While the *physical* left mouse button is held down, inject rapid
 left-click sequences at a configurable interval; releasing the button

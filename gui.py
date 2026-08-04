@@ -1,5 +1,5 @@
 """
-gui.py — CustomTkinter configuration window for KeySync.
+gui.py — CustomTkinter configuration window for 按键同步.
 
 Modern flat/rounded UI with pink theme.
 """

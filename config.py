@@ -1,8 +1,9 @@
 r"""
-config.py — Thread-safe configuration management for KeySync.
+config.py — Thread-safe configuration management for 按键同步.
 
 Persists allowed-app list, key mappings, and enabled state to
-%APPDATA%\KeySync\config.json. All reads/writes are protected by a
+%APPDATA%\KeySync\config.json.
+(Path kept as KeySync for backward compatibility with existing configs.) All reads/writes are protected by a
 threading.Lock. Writes are atomic (write to .tmp, then os.replace).
 """
 

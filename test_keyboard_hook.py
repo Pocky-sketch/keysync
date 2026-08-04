@@ -1,4 +1,4 @@
-"""KeySync 卡键回归测试 — mock keyboard 模块验证暂停/关闭时的键释放。
+"""按键同步 卡键回归测试 — mock keyboard 模块验证暂停/关闭时的键释放。
 
 模拟场景:
 1. 正常映射 A→B: down 注入 press(B), up 注入 release(B)

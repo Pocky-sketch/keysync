@@ -1,5 +1,5 @@
 """
-main.py — KeySync entry point.
+main.py — 按键同步 entry point.
 
 Orchestrates the config, foreground monitor, keyboard hook, config GUI,
 and system tray icon. Enforces single-instance via a named mutex and
@@ -29,7 +29,7 @@ from tray import TrayIcon
 # Single-instance enforcement via named mutex
 # The handle is stored globally to prevent GC from releasing it.
 # ------------------------------------------------------------------
-MUTEX_NAME = "Global\\KeySync_SingleInstance"
+MUTEX_NAME = "Global\\按键同步_SingleInstance"
 
 _kernel32 = ctypes.windll.kernel32
 _kernel32.CreateMutexW.restype = wintypes.HANDLE
@@ -98,7 +98,9 @@ def _make_tray_quit(gui):
 def main():
     # --- Single-instance check ---
     if not _acquire_single_instance():
-        # Find the existing KeySync process
+        # Find the existing 按键同步 process. Match both the old ASCII
+        # name and the current Chinese name so leftover legacy instances
+        # are still detected (defensive — the mutex name changed).
         import psutil
         old_pid = None
         for p in psutil.process_iter(['pid', 'cmdline']):

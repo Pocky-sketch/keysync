@@ -1,7 +1,7 @@
 """
-KeySync.pyw — Console-free launcher.
+按键同步.pyw — Console-free launcher.
 
-Double-click this file to run KeySync without the black terminal window.
+Double-click this file to run 按键同步 without the black terminal window.
 (On Windows, .pyw files run with pythonw.exe which doesn't show a console.)
 """
 
