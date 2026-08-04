@@ -4,8 +4,13 @@ gui.py — CustomTkinter configuration window for 按键同步.
 Modern flat/rounded UI with pink theme.
 """
 
+import ctypes
+import ctypes.wintypes as wintypes
+import threading
 import tkinter as tk
 import customtkinter as ctk
+
+import keyboard
 
 from config import Config
 
@@ -55,8 +60,9 @@ def tk_key_to_name(event) -> str | None:
 # ── ConfigGUI ──────────────────────────────────────────────────────
 
 class ConfigGUI:
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, on_hotkey_changed=None):
         self._config = config
+        self._on_hotkey_changed = on_hotkey_changed  # callable() when autoclick hotkey changes
         self._visible = False
         ctk.set_appearance_mode("light")
         ctk.set_default_color_theme("blue")
@@ -247,6 +253,25 @@ class ConfigGUI:
                       command=self._on_set_autoclick_interval
                       ).pack(side=tk.RIGHT, padx=2)
 
+        # --- Auto-click hotkey row ---
+        hotkey_row = ctk.CTkFrame(self._root, fg_color="transparent")
+        hotkey_row.pack(pady=(0, 6))
+        ctk.CTkLabel(hotkey_row, text="⌨ 连点开关快捷键:",
+                     text_color=PLUM, font=("Segoe UI", 10),
+                     ).pack(side=tk.LEFT)
+        self._autoclick_hotkey_btn = ctk.CTkButton(
+            hotkey_row, width=104, height=24,
+            fg_color=PINK_BTN, hover_color=PINK_HOVER,
+            text_color=ROSE, corner_radius=12,
+            command=self._on_set_autoclick_hotkey,
+        )
+        self._autoclick_hotkey_btn.pack(side=tk.LEFT, padx=4)
+        ctk.CTkButton(hotkey_row, text="清除", width=44, height=24,
+                      fg_color=PINK_BTN, hover_color=PINK_HOVER,
+                      text_color=ROSE, corner_radius=12,
+                      command=self._on_clear_autoclick_hotkey
+                      ).pack(side=tk.LEFT)
+
         # --- Lace bottom ---
         ctk.CTkLabel(self._root, text=LACE_BOT,
                      text_color=LIGHT, font=("Segoe UI", 10)).pack(pady=(2, 2))
@@ -363,6 +388,147 @@ class ConfigGUI:
         except Exception:
             pass
 
+    def _update_autoclick_hotkey_btn(self):
+        hk = self._config.get_autoclick_hotkey()
+        if not hk:
+            text = "未设置"
+        elif hk == "mouse4":
+            text = "侧键4"
+        elif hk == "mouse5":
+            text = "侧键5"
+        else:
+            text = hk.upper()
+        self._autoclick_hotkey_btn.configure(text=text)
+
+    def _on_clear_autoclick_hotkey(self):
+        self._config.set_autoclick_hotkey("")
+        self._update_autoclick_hotkey_btn()
+        if self._on_hotkey_changed:
+            self._on_hotkey_changed()
+
+    def _on_set_autoclick_hotkey(self):
+        """Record a hotkey (keyboard key or mouse side button)."""
+        from autoclicker import (
+            WH_MOUSE_LL, WM_XBUTTONDOWN, XBUTTON1, XBUTTON2,
+            LLMHF_INJECTED, MSLLHOOKSTRUCT,
+        )
+        WM_QUIT = 0x0012
+
+        dlg = ctk.CTkToplevel(self._root)
+        dlg.title(f"{HEART} 连点快捷键")
+        dlg.geometry("380x210")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+        dlg.configure(fg_color=PINK_BG)
+
+        dlg.update_idletasks()
+        px, py = self._root.winfo_x(), self._root.winfo_y()
+        pw, ph = self._root.winfo_width(), self._root.winfo_height()
+        dlg.geometry(f"+{px + (pw - 380) // 2}+{py + (ph - 210) // 2}")
+
+        ctk.CTkLabel(dlg,
+                     text="按下要绑定的键\n（键盘键 或 鼠标侧键）",
+                     text_color=ROSE, font=("Segoe UI", 12, "bold"),
+                     justify="center").pack(pady=(20, 6))
+        ctk.CTkLabel(dlg, text="按 Esc 取消",
+                     text_color=LIGHT, font=("Segoe UI", 9),
+                     ).pack()
+
+        result = {"value": None}
+        mouse_thread = [None]
+
+        # --- Mouse side-button listener (WH_MOUSE_LL, hMod must be NULL
+        # on this machine — 0x7e otherwise; same as the auto-clicker) ---
+        def mouse_listen():
+            user32 = ctypes.windll.user32
+            HOOKPROC = ctypes.WINFUNCTYPE(
+                ctypes.c_long, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+            holder = []
+
+            @HOOKPROC
+            def cb(nCode, wParam, lParam):
+                if nCode >= 0:
+                    struct = ctypes.cast(
+                        lParam, ctypes.POINTER(MSLLHOOKSTRUCT))
+                    if (struct and not (struct.contents.flags & LLMHF_INJECTED)
+                            and wParam == WM_XBUTTONDOWN):
+                        b = (struct.contents.mouseData >> 16) & 0xFFFF
+                        if b in (XBUTTON1, XBUTTON2):
+                            result["value"] = (
+                                "mouse4" if b == XBUTTON1 else "mouse5")
+                            user32.PostThreadMessageW(
+                                threading.get_ident(), WM_QUIT, 0, 0)
+                return user32.CallNextHookEx(None, nCode, wParam, lParam)
+
+            holder.append(cb)
+            h = user32.SetWindowsHookExW(WH_MOUSE_LL, cb, None, 0)
+            msg = wintypes.MSG()
+            while not result["value"]:
+                ret = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
+                if ret <= 0:
+                    break
+                user32.TranslateMessage(ctypes.byref(msg))
+                user32.DispatchMessageW(ctypes.byref(msg))
+            if h:
+                user32.UnhookWindowsHookEx(h)
+
+        mouse_thread[0] = threading.Thread(
+            target=mouse_listen, daemon=True, name="hotkey-record-mouse")
+        mouse_thread[0].start()
+
+        # --- Keyboard listener (non-blocking; Esc cancels) ---
+        _MOD_KEYS = {
+            "shift", "left shift", "right shift",
+            "ctrl", "left ctrl", "right ctrl",
+            "alt", "left alt", "right alt",
+            "win", "left windows", "right windows", "menu",
+        }
+
+        def kb_cb(e):
+            if e.event_type != keyboard.KEY_DOWN:
+                return
+            name = keyboard.normalize_name(e.name)
+            if name == "esc":
+                result["value"] = "__cancel__"
+            elif name not in _MOD_KEYS:
+                result["value"] = name
+
+        kb_handler = keyboard.hook(kb_cb)
+
+        def cleanup():
+            try:
+                keyboard.unhook(kb_handler)
+            except Exception:
+                pass
+            if (mouse_thread[0] and mouse_thread[0].is_alive()):
+                try:
+                    ctypes.windll.user32.PostThreadMessageW(
+                        mouse_thread[0].ident, WM_QUIT, 0, 0)
+                except Exception:
+                    pass
+
+        def poll():
+            v = result["value"]
+            if v:
+                cleanup()
+                try:
+                    dlg.destroy()
+                except Exception:
+                    pass
+                if v != "__cancel__":
+                    self._config.set_autoclick_hotkey(v)
+                    self._update_autoclick_hotkey_btn()
+                    if self._on_hotkey_changed:
+                        self._on_hotkey_changed()
+                return
+            try:
+                dlg.after(100, poll)
+            except Exception:
+                cleanup()  # dialog closed — stop listeners
+
+        dlg.protocol("WM_DELETE_WINDOW", lambda: result.setdefault("value", "__cancel__"))
+        dlg.after(100, poll)
+
     # ── Key mapping handlers ────────────────────────────────────────
 
     def _on_add_mapping(self):
@@ -472,6 +638,7 @@ class ConfigGUI:
         self._typing_pause_var.set(self._config.is_typing_pause())
         self._autoclick_var.set(self._config.is_autoclick_enabled())
         self._update_autoclick_mode_btn()
+        self._update_autoclick_hotkey_btn()
 
     def _get_selected_app_name(self):
         sel = self._app_listbox.curselection()

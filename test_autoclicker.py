@@ -24,6 +24,10 @@ cfg_dir = tempfile.mkdtemp()
 cfg = Config(os.path.join(cfg_dir, "config.json"))
 cfg.add_app("VRChat.exe")
 
+# 模块级 _config (钩子回调需要)
+import autoclicker as ac_mod
+ac_mod._config = cfg
+
 
 class FakeMonitor:
     def __init__(self, allowed=True):
@@ -196,6 +200,54 @@ finally:
     autoclicker._injected_down = False
 
 cfg.set_autoclick_mode("click")
+
+# ---- 快捷键配置往返 (同 Pause 键开关同步的模式) ----
+cfg.set_autoclick_hotkey("mouse4")
+expect("热键: mouse4 往返", cfg.get_autoclick_hotkey() == "mouse4")
+cfg.set_autoclick_hotkey("f9")
+expect("热键: f9 往返", cfg.get_autoclick_hotkey() == "f9")
+cfg.set_autoclick_hotkey("")
+expect("热键: 清空", cfg.get_autoclick_hotkey() == "")
+cfg.set_autoclick_hotkey("mouse5")
+
+# ---- toggle_autoclick ----
+cfg.set_autoclick_enabled(False)
+expect("toggle: 从关到开", cfg.toggle_autoclick() is True)
+expect("toggle: 从开到关", cfg.toggle_autoclick() is False)
+expect("toggle: 配置持久化", cfg.is_autoclick_enabled() is False)
+
+# ---- 侧键触发 toggle (mock SendInput 防真注入) ----
+cfg.set_autoclick_enabled(False)
+cfg.set_autoclick_hotkey("mouse4")
+autoclicker._user32.SendInput = fake_si2
+try:
+    ac_mod._on_side_button(autoclicker.XBUTTON1)  # 物理侧键4按下
+    expect("侧键: mouse4 触发 toggle 开", cfg.is_autoclick_enabled() is True)
+
+    # hold 模式下关闭时释放注入的 down
+    autoclicker._injected_down = True
+    calls2.clear()
+    ac_mod._on_side_button(autoclicker.XBUTTON1)  # 再按 → 关闭
+    expect("侧键: 关闭时释放注入 down", autoclicker._injected_down is False)
+    expect("侧键: 释放调用了 LEFT UP",
+           autoclicker.MOUSEEVENTF_LEFTUP in calls2)
+
+    # 未配置的侧键不触发
+    cfg.set_autoclick_hotkey("mouse5")
+    cfg.set_autoclick_enabled(False)
+    ac_mod._on_side_button(autoclicker.XBUTTON1)  # mouse4 按下, 但配置是 mouse5
+    expect("侧键: 未配置的侧键不触发", cfg.is_autoclick_enabled() is False)
+
+    # 键盘热键走 toggle_from_hotkey (Pause 键开关同步的同一模式)
+    cfg.set_autoclick_hotkey("f9")
+    ac_mod.toggle_from_hotkey()
+    expect("热键: f9 触发 toggle 开", cfg.is_autoclick_enabled() is True)
+    ac_mod.toggle_from_hotkey()
+    expect("热键: f9 触发 toggle 关", cfg.is_autoclick_enabled() is False)
+finally:
+    autoclicker._user32.SendInput = orig_si
+    autoclicker._injected_down = False
+    cfg.set_autoclick_hotkey("")
 
 print()
 print("全部通过" if ok else "存在失败项!")

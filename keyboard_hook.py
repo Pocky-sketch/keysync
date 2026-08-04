@@ -38,6 +38,9 @@ _CHAT_TIMEOUT = 15.0  # auto-resume after idle
 
 # Toggle hotkey
 _toggle_hotkey_handler = None
+# Auto-clicker toggle hotkey (keyboard keys only; mouse side buttons are
+# handled by the AutoClicker's own mouse hook)
+_autoclick_hotkey_handler = None
 
 
 # ------------------------------------------------------------------
@@ -150,6 +153,17 @@ def _on_toggle():
             _keys_down = {}
 
 
+def _on_autoclick_toggle():
+    """Toggle the auto-clicker from its keyboard hotkey.
+
+    Delayed import avoids a circular dependency (autoclicker imports
+    keyboard_hook for is_chat_paused). By the time a hotkey fires, both
+    modules are fully loaded.
+    """
+    from autoclicker import toggle_from_hotkey
+    toggle_from_hotkey()
+
+
 # ------------------------------------------------------------------
 # Public API
 # ------------------------------------------------------------------
@@ -185,9 +199,44 @@ class KeyboardHook:
         except Exception:
             pass
 
+        self.refresh_autoclick_hotkey()
+
+    def refresh_autoclick_hotkey(self):
+        """(Re)register the auto-clicker keyboard hotkey from config.
+
+        Called at start and after the user changes the hotkey in the GUI.
+        Mouse side-button hotkeys are handled by the AutoClicker's own
+        mouse hook and need no registration here.
+        """
+        global _autoclick_hotkey_handler
+        if not self._running:
+            return
+        if _autoclick_hotkey_handler is not None:
+            try:
+                keyboard.remove_hotkey(_autoclick_hotkey_handler)
+            except Exception:
+                pass
+            _autoclick_hotkey_handler = None
+
+        hotkey = _config.get_autoclick_hotkey()
+        if hotkey and not hotkey.lower().startswith("mouse"):
+            try:
+                _autoclick_hotkey_handler = keyboard.add_hotkey(
+                    hotkey, _on_autoclick_toggle, suppress=False
+                )
+            except Exception:
+                _autoclick_hotkey_handler = None
+
     def stop(self):
-        global _toggle_hotkey_handler, _chat_paused_until
+        global _toggle_hotkey_handler, _chat_paused_until, _autoclick_hotkey_handler
         self._running = False
+
+        if _autoclick_hotkey_handler is not None:
+            try:
+                keyboard.remove_hotkey(_autoclick_hotkey_handler)
+            except Exception:
+                pass
+            _autoclick_hotkey_handler = None
 
         if _toggle_hotkey_handler is not None:
             try:

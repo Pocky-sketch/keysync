@@ -31,8 +31,14 @@ _kernel32 = ctypes.windll.kernel32
 WH_MOUSE_LL = 14
 WM_LBUTTONDOWN = 0x0201
 WM_LBUTTONUP = 0x0202
+WM_XBUTTONDOWN = 0x020B
+WM_XBUTTONUP = 0x020C
 WM_QUIT = 0x0012
 LLMHF_INJECTED = 0x00000001
+
+# XButton 标识 (MSLLHOOKSTRUCT.mouseData 高 16 位)
+XBUTTON1 = 0x0001  # 侧键4 (后退)
+XBUTTON2 = 0x0002  # 侧键5 (前进)
 
 INPUT_MOUSE = 0
 MOUSEEVENTF_LEFTDOWN = 0x0002
@@ -110,6 +116,10 @@ _user32.SendInput.argtypes = [
 _pressed = False
 _injected_down = False  # hold mode: whether we're currently holding LEFT DOWN
 
+# Module-level config reference so the hook callback (which has no
+# instance access) can read the hotkey setting.
+_config: Config | None = None
+
 _HOOKPROC = ctypes.WINFUNCTYPE(
     ctypes.c_long, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM,
 )
@@ -130,7 +140,42 @@ def _hook_proc(nCode: int, wParam: int, lParam: int) -> int:
             _pressed = True
         elif wParam == WM_LBUTTONUP:
             _pressed = False
+        elif wParam == WM_XBUTTONDOWN:
+            # Physical side-button press → hotkey toggle for the
+            # auto-clicker. mouseData high word = which XButton.
+            button = (struct.contents.mouseData >> 16) & 0xFFFF
+            _on_side_button(button)
     return _user32.CallNextHookEx(None, nCode, wParam, lParam)
+
+
+def _on_side_button(button: int):
+    """Handle a physical side-button press — hotkey toggle if configured.
+
+    XBUTTON1 → "mouse4", XBUTTON2 → "mouse5". Called on the hook thread.
+    """
+    if _config is None:
+        return
+    hotkey = _config.get_autoclick_hotkey().lower()
+    expected = "mouse4" if button == XBUTTON1 else "mouse5" if button == XBUTTON2 else ""
+    if expected and hotkey == expected:
+        toggle_from_hotkey()
+
+
+def toggle_from_hotkey():
+    """Toggle the auto-clicker on/off (called by keyboard hotkey or mouse
+    side button). Releases any held-down injection when turning off, so
+    the game never gets a stuck button.
+    """
+    global _injected_down
+    if _config is None:
+        return
+    new_state = _config.toggle_autoclick()
+    if not new_state and _injected_down:
+        try:
+            _inject_up()
+        except Exception:
+            pass
+        _injected_down = False
 
 
 def _inject_down():
@@ -173,7 +218,9 @@ class AutoClicker:
     """Hold-to-repeat auto-clicker, gated by config + whitelist + pause."""
 
     def __init__(self, config: Config, monitor: ForegroundMonitor):
+        global _config
         self._config = config
+        _config = config  # module-level ref for the hook callback
         self._monitor = monitor
         self._running = False
         self._thread: threading.Thread | None = None  # hook thread

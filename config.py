@@ -41,6 +41,7 @@ class Config:
             "autoclick_enabled": False,
             "autoclick_interval": 50,  # ms between clicks while held
             "autoclick_mode": "click",  # "click" | "hold"
+            "autoclick_hotkey": "",     # 连点开关快捷键: 键盘键名 或 mouse4/mouse5
         }
 
         self._has_run_before = os.path.exists(self._path)
@@ -176,6 +177,29 @@ class Config:
             self._data["autoclick_mode"] = mode if mode in ("click", "hold") else "click"
             self._save()
 
+    def get_autoclick_hotkey(self) -> str:
+        """Return the auto-click toggle hotkey.
+
+        Keyboard key names ("f9", "pause"…) are handled by the keyboard
+        hook; "mouse4"/"mouse5" are handled by the mouse hook.
+        Empty string = not set.
+        """
+        with self._lock:
+            return str(self._data.get("autoclick_hotkey", "")).strip()
+
+    def set_autoclick_hotkey(self, key: str):
+        with self._lock:
+            self._data["autoclick_hotkey"] = (key or "").strip()
+            self._save()
+
+    def toggle_autoclick(self) -> bool:
+        """Toggle the auto-clicker on/off; return the new state."""
+        with self._lock:
+            self._data["autoclick_enabled"] = not self._data.get(
+                "autoclick_enabled", False)
+            self._save()
+            return bool(self._data["autoclick_enabled"])
+
     # ------------------------------------------------------------------
     # Public API — key mappings
     # ------------------------------------------------------------------
@@ -269,6 +293,7 @@ class Config:
                 self._data["autoclick_interval"] = loaded.get("autoclick_interval", 50)
                 mode = loaded.get("autoclick_mode", "click")
                 self._data["autoclick_mode"] = mode if mode in ("click", "hold") else "click"
+                self._data["autoclick_hotkey"] = str(loaded.get("autoclick_hotkey", "")).strip()
 
                 # Migrate old format: source_key / target_key → key_mappings
                 if "key_mappings" in loaded:

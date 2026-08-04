@@ -162,7 +162,7 @@ def main():
     autoclicker.start()
 
     # --- Create GUI (the "real" tkinter root) ---
-    gui = ConfigGUI(config)
+    gui = ConfigGUI(config, on_hotkey_changed=hook.refresh_autoclick_hotkey)
 
     # --- Create tray icon ---
     def toggle_gui():
