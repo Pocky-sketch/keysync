@@ -31,6 +31,14 @@ _CHAT_TIMEOUT = 15.0  # auto-resume after idle
 _pending_reinject: dict | None = None  # {source: target} to re-press
 _suppress_key: str | None = None       # the key that triggered suppression
 
+# Re-send guard: after suppressing a physical chord key we re-send a
+# clean copy (keyboard.press). That re-sent event passes through the
+# hook again — without a guard it would re-trigger suppression, loop
+# forever, and block the entire keyboard (and leak modifiers that then
+# fire OS shortcuts like Win+C → m365.cloud.microsoft).
+_resend_key: str | None = None
+_resend_until: float = 0.0
+
 # Toggle hotkey
 _toggle_hotkey_handler = None
 
@@ -72,7 +80,7 @@ def _on_key_event(event: keyboard.KeyboardEvent):
 
 
 def _on_key_event_impl(event: keyboard.KeyboardEvent):
-    global _keys_down, _chat_paused_until, _pending_reinject, _suppress_key
+    global _keys_down, _chat_paused_until, _pending_reinject, _suppress_key, _resend_key, _resend_until
 
     if _config is None:
         return
@@ -85,12 +93,21 @@ def _on_key_event_impl(event: keyboard.KeyboardEvent):
     if getattr(event, "is_injected", False):
         return
 
+    event_name = event.name.lower()
+    is_down = event.event_type == keyboard.KEY_DOWN
+
+    # Our own clean re-send (from the suppression guard below): consume
+    # the guard and pass the event through. Without this, the re-sent
+    # chord key would re-trigger suppression → infinite loop → whole
+    # keyboard blocks.
+    if (is_down and _resend_key is not None
+            and event_name == _resend_key and time.time() < _resend_until):
+        _resend_key = None
+        return
+
     mappings = _config.get_mappings()
     if not mappings:
         return
-
-    event_name = event.name.lower()
-    is_down = event.event_type == keyboard.KEY_DOWN
 
     # --- Re-inject after suppression: the chord key (e.g. Tab) is up,
     # so restore the injected keys we released. Only restore sources
@@ -149,7 +166,10 @@ def _on_key_event_impl(event: keyboard.KeyboardEvent):
     # Runs AFTER chat-key detection so chat keys (e.g. Enter) are never
     # swallowed by this guard, and is skipped while chat-paused.
     if is_down and _keys_down and not is_chat_paused():
-        injected = {m["target"] for m in mappings if m["source"] in _keys_down}
+        # Only keys that are ACTUALLY injected count — checking dict
+        # membership (not value) kept stale {"w": False} entries alive,
+        # so the re-sent chord key re-triggered suppression forever.
+        injected = {m["target"] for m in mappings if _keys_down.get(m["source"])}
         suppress_after = {
             "tab", "esc", "space", "enter", "f1", "f2", "f3", "f4", "f5",
             "f6", "f7", "f8", "f9", "f10", "f11", "f12",
@@ -161,21 +181,24 @@ def _on_key_event_impl(event: keyboard.KeyboardEvent):
             # 1. Remember which injected keys to restore on chord-key up.
             _pending_reinject = {
                 m["source"]: m["target"]
-                for m in mappings if m["source"] in _keys_down
+                for m in mappings if _keys_down.get(m["source"])
             }
             _suppress_key = event_name
-            # 2. Release injected keys so the chord no longer carries a
-            #    modifier (Shift up lands in the queue before our clean
-            #    re-send below).
+            # 2. Release injected keys and REMOVE their state entirely —
+            #    an empty _keys_down guarantees the re-sent event below
+            #    cannot re-enter this block (loop prevention).
             for m in mappings:
-                if m["source"] in _keys_down:
+                if _keys_down.get(m["source"]):
                     try:
                         keyboard.release(m["target"])
                     except Exception:
                         pass
-                    _keys_down[m["source"]] = False
+                    del _keys_down[m["source"]]
             # 3. Swallow the physical chord-key down and re-send a clean
-            #    copy (no modifier held anymore).
+            #    copy (no modifier held anymore). Guard the re-send so it
+            #    passes through the hook instead of being suppressed again.
+            _resend_key = event_name
+            _resend_until = time.time() + 0.25
             try:
                 keyboard.press(event_name)
             except Exception:
@@ -217,12 +240,13 @@ def _on_key_event_impl(event: keyboard.KeyboardEvent):
 # ------------------------------------------------------------------
 
 def _on_toggle():
-    global _keys_down, _pending_reinject, _suppress_key
+    global _keys_down, _pending_reinject, _suppress_key, _resend_key
     if _config is not None:
         new_state = _config.toggle_enabled()
         if not new_state:
             _pending_reinject = None
             _suppress_key = None
+            _resend_key = None
             # Sync disabled — release every key we may have injected,
             # otherwise the target key stays stuck until re-enabled.
             for m in _config.get_mappings():
@@ -267,10 +291,11 @@ class KeyboardHook:
             pass
 
     def stop(self):
-        global _toggle_hotkey_handler, _chat_paused_until, _pending_reinject, _suppress_key
+        global _toggle_hotkey_handler, _chat_paused_until, _pending_reinject, _suppress_key, _resend_key
         self._running = False
         _pending_reinject = None
         _suppress_key = None
+        _resend_key = None
 
         if _toggle_hotkey_handler is not None:
             try:

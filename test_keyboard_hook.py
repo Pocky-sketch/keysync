@@ -81,6 +81,7 @@ def reset():
     kh._chat_paused_until = 0.0
     kh._pending_reinject = None
     kh._suppress_key = None
+    kh._resend_key = None
     _pressed_state.update({"w": True, "a": True})
 
 
@@ -145,6 +146,12 @@ ok &= expect("抑制: Tab down 被吞 (返回 False)", ret is False)
 ok &= expect("抑制: 注入的 left shift 已释放", ("release", "left shift") in fake_calls)
 ok &= expect("抑制: 重发干净 Tab down", ("press", "tab") in fake_calls)
 ok &= expect("抑制: 抑制状态已记录", kh._pending_reinject is not None)
+ok &= expect("抑制: _keys_down 已清空 (防循环)", kh._keys_down.get("w", False) is False)
+# 重发的 Tab 事件再次进钩子 → 守卫放行, 不再二次抑制 (死循环修复点)
+fake_calls.clear()
+ret = _on_key_event(ev("tab", "down"))
+ok &= expect("抑制: 重发事件被守卫放行 (不二次抑制)", ret is None)
+ok &= expect("抑制: 重发放行无额外 release/press", len(fake_calls) == 0)
 fake_calls.clear()
 ret2 = _on_key_event(ev("tab", "up"))  # Tab 松开
 ok &= expect("抑制: Tab up 放行", ret2 is None)
@@ -175,7 +182,7 @@ ok &= expect("先松W: _keys_down 无 w", kh._keys_down.get("w", False) is False
 reset()
 _on_key_event(ev("w", "down"))
 fake_calls.clear()
-ret = _on_key_event(ev("tab", "down", injected=True))  # 模拟重发的干净 Tab
+ret = _on_key_event(ev("tab", "down", injected=True))  # 模拟注入事件
 ok &= expect("注入事件: 直接放行不吞", ret is None)
 ok &= expect("注入事件: 不触发抑制 (无 release/press)", len(fake_calls) == 0)
 
@@ -187,6 +194,20 @@ ok &= expect("抑制+关闭: 抑制状态存在", kh._pending_reinject is not No
 _on_toggle()  # 关闭同步
 ok &= expect("抑制+关闭: 抑制状态清空", kh._pending_reinject is None and kh._suppress_key is None)
 _on_toggle()  # 重新开启
+
+# --- 场景 11: 连续快速 Tab 两次 (重发守卫过期后不误放行物理键) ---
+reset()
+_on_key_event(ev("w", "down"))
+ret = _on_key_event(ev("tab", "down"))   # Tab1 → 抑制
+ok &= expect("双Tab: Tab1 抑制", ret is False)
+_on_key_event(ev("tab", "down"))         # 重发的 Tab1 → 守卫放行
+_on_key_event(ev("tab", "up"))           # Tab1 up → 恢复 Shift
+ok &= expect("双Tab: Tab1 up 恢复 Shift", ("press", "left shift") in fake_calls)
+fake_calls.clear()
+ret = _on_key_event(ev("tab", "down"))   # Tab2 → 又抑制 (Shift 已恢复)
+ok &= expect("双Tab: Tab2 再次抑制", ret is False)
+_on_key_event(ev("tab", "up"))
+ok &= expect("双Tab: Tab2 up 恢复 Shift", ("press", "left shift") in fake_calls)
 
 # 清理: 移除 w 映射 (保持后续测试环境干净)
 cfg.remove_mapping(0)  # w→left shift
