@@ -28,8 +28,17 @@ def _release(k):
     fake_calls.append(("release", k))
 
 
+# 物理键状态 (is_pressed), 默认 w 按着 — 测试可改
+_pressed_state = {"w": True, "a": True}
+
+
+def _is_pressed(k):
+    return _pressed_state.get(k, False)
+
+
 fake_keyboard.press = _press
 fake_keyboard.release = _release
+fake_keyboard.is_pressed = _is_pressed
 sys.modules["keyboard"] = fake_keyboard
 
 # ---- mock 前台监视器: 始终允许 ----
@@ -62,14 +71,17 @@ hook = KeyboardHook(FakeMonitor(), cfg)
 import keyboard_hook as kh
 
 
-def ev(name, etype):
-    return types.SimpleNamespace(name=name, event_type=etype)
+def ev(name, etype, injected=False):
+    return types.SimpleNamespace(name=name, event_type=etype, is_injected=injected)
 
 
 def reset():
     fake_calls.clear()
     kh._keys_down.clear()
     kh._chat_paused_until = 0.0
+    kh._pending_reinject = None
+    kh._suppress_key = None
+    _pressed_state.update({"w": True, "a": True})
 
 
 def expect(desc, cond):
@@ -128,19 +140,46 @@ cfg.add_mapping("w", "left shift")  # W → Shift
 _on_key_event(ev("w", "down"))      # 按住 W → 注入 shift
 ok &= expect("抑制: W down 注入 left shift", ("press", "left shift") in fake_calls)
 fake_calls.clear()
-_on_key_event(ev("tab", "down"))    # 按 Tab
-ok &= expect("抑制: Tab down 释放 left shift (防 Shift+Tab)", ("release", "left shift") in fake_calls)
+ret = _on_key_event(ev("tab", "down"))  # 按 Tab
+ok &= expect("抑制: Tab down 被吞 (返回 False)", ret is False)
+ok &= expect("抑制: 注入的 left shift 已释放", ("release", "left shift") in fake_calls)
+ok &= expect("抑制: 重发干净 Tab down", ("press", "tab") in fake_calls)
 ok &= expect("抑制: 抑制状态已记录", kh._pending_reinject is not None)
 fake_calls.clear()
-_on_key_event(ev("tab", "up"))      # Tab 松开
-ok &= expect("抑制: Tab up 重新注入 left shift", ("press", "left shift") in fake_calls)
+ret2 = _on_key_event(ev("tab", "up"))  # Tab 松开
+ok &= expect("抑制: Tab up 放行", ret2 is None)
+ok &= expect("抑制: Tab up 重新注入 left shift (W 仍按着)", ("press", "left shift") in fake_calls)
 ok &= expect("抑制: 抑制状态已清除", kh._pending_reinject is None)
 ok &= expect("抑制: _keys_down 恢复", kh._keys_down.get("w", False) is True)
 fake_calls.clear()
 _on_key_event(ev("w", "up"))        # 松开 W
 ok &= expect("抑制: W up 释放 left shift", ("release", "left shift") in fake_calls)
 
-# --- 场景 7: 抑制后 toggle 关闭清理 ---
+# --- 场景 8: W 在 Tab 前松开 → 不错误恢复 Shift (卡键根因) ---
+reset()
+_on_key_event(ev("w", "down"))      # W down → Shift down
+fake_calls.clear()
+ret = _on_key_event(ev("tab", "down"))  # Tab down → 抑制
+ok &= expect("先松W: Tab down 吞+释放 Shift", ret is False and ("release", "left shift") in fake_calls)
+ok &= expect("先松W: pending 含 w", kh._pending_reinject.get("w") == "left shift")
+fake_calls.clear()
+_pressed_state["w"] = False          # 物理 W 已松开
+_on_key_event(ev("w", "up"))         # W up → 清理 pending
+ok &= expect("先松W: W up 从 pending 移除", kh._pending_reinject is None or "w" not in kh._pending_reinject)
+fake_calls.clear()
+_on_key_event(ev("tab", "up"))       # Tab up → 不应恢复 Shift
+ok &= expect("先松W: Tab up 不恢复 Shift (无卡键)", ("press", "left shift") not in fake_calls)
+ok &= expect("先松W: _keys_down 无 w", kh._keys_down.get("w", False) is False)
+
+# --- 场景 9: 注入的事件 (is_injected) 直接放行 ---
+reset()
+_on_key_event(ev("w", "down"))
+fake_calls.clear()
+ret = _on_key_event(ev("tab", "down", injected=True))  # 模拟重发的干净 Tab
+ok &= expect("注入事件: 直接放行不吞", ret is None)
+ok &= expect("注入事件: 不触发抑制 (无 release/press)", len(fake_calls) == 0)
+
+# --- 场景 10: 抑制后 toggle 关闭清理 ---
 reset()
 _on_key_event(ev("w", "down"))
 _on_key_event(ev("tab", "down"))    # 触发抑制
