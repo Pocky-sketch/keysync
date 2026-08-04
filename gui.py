@@ -68,6 +68,18 @@ class ConfigGUI:
         self._root.configure(fg_color=PINK_BG)
         self._root.protocol("WM_DELETE_WINDOW", self.quit)
 
+        # Window / taskbar icon (pure-ASCII path — see 快捷方式制作流程)
+        try:
+            import os
+            home = os.path.expanduser("~")
+            for name in ["keysync_tk.ico", "keysync_app.ico"]:
+                p = os.path.join(home, name)
+                if os.path.exists(p):
+                    self._root.iconbitmap(p)
+                    break
+        except Exception:
+            pass
+
         try:
             __import__("ctypes").windll.shcore.SetProcessDpiAwareness(1)
         except Exception:
