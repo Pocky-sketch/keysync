@@ -153,6 +153,28 @@ class ConfigGUI:
         except Exception:
             pass  # window gone / mainloop not running — nothing to sync
 
+    def notify_autoclick_failure(self):
+        """Thread-safe: show the SendInput-blocked warning in the GUI.
+
+        Called from the click thread after a long streak of failed
+        injections (game running as admin while we're not, secure
+        desktop, etc.). Cleared on the next successful click via
+        _sync_ui_state.
+        """
+        try:
+            self._root.after(0, lambda: self._autoclick_warn_var.set(
+                "⚠ 连点注入失败：目标游戏可能以管理员运行，请以管理员身份运行本软件"
+            ))
+        except Exception:
+            pass
+
+    def clear_autoclick_failure(self):
+        """Thread-safe: clear the injection-failure warning (recovered)."""
+        try:
+            self._root.after(0, lambda: self._autoclick_warn_var.set(""))
+        except Exception:
+            pass
+
     def _sync_ui_state(self):
         """Refresh checkbox/button states from config (main thread only)."""
         try:
@@ -289,6 +311,12 @@ class ConfigGUI:
                       text_color=ROSE, corner_radius=12,
                       command=self._on_clear_autoclick_hotkey
                       ).pack(side=tk.LEFT)
+
+        # --- Auto-click injection warning (SendInput blocked) ---
+        self._autoclick_warn_var = tk.StringVar(value="")
+        ctk.CTkLabel(self._root, textvariable=self._autoclick_warn_var,
+                     text_color="#c0392b", font=("Segoe UI", 9),
+                     ).pack(pady=(0, 2))
 
         # --- Lace bottom ---
         ctk.CTkLabel(self._root, text=LACE_BOT,

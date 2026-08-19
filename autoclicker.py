@@ -66,7 +66,7 @@ class MOUSEINPUT(ctypes.Structure):
         ("mouseData", wintypes.DWORD),
         ("dwFlags", wintypes.DWORD),
         ("time", wintypes.DWORD),
-        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+        ("dwExtraInfo", ctypes.c_size_t),  # ULONG_PTR — was wrongly POINTER(c_ulong)
     ]
 
 
@@ -105,6 +105,57 @@ _user32.SendInput.restype = wintypes.UINT
 _user32.SendInput.argtypes = [
     wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int,
 ]
+
+# Windows 计时器分辨率: timeBeginPeriod(1) 把系统计时器粒度降到 1ms,
+# time.sleep 才能精确到毫秒级 — 否则默认 15.6ms 粒度, 连点节奏会剧烈抖动。
+_winmm = ctypes.windll.winmm
+_winmm.timeBeginPeriod.restype = wintypes.UINT
+_winmm.timeBeginPeriod.argtypes = [wintypes.UINT]
+_winmm.timeEndPeriod.restype = wintypes.UINT
+_winmm.timeEndPeriod.argtypes = [wintypes.UINT]
+
+# 连点/钩子线程优先级 (参考 b1scoito/clicker 的 THREAD_PRIORITY_TIME_CRITICAL)
+THREAD_PRIORITY_TIME_CRITICAL = 15
+_kernel32.SetThreadPriority.restype = wintypes.BOOL
+_kernel32.SetThreadPriority.argtypes = [
+    ctypes.c_void_p, ctypes.c_int,
+]
+_kernel32.GetCurrentThread.restype = ctypes.c_void_p
+
+_TIMER_PERIOD_MS = 1
+_timer_period_count = 0  # 引用计数, 多组件共享计时器精度时安全
+
+
+def _begin_timer_period():
+    """Raise the Windows timer resolution to 1 ms (ref-counted)."""
+    global _timer_period_count
+    _timer_period_count += 1
+    if _timer_period_count == 1:
+        try:
+            _winmm.timeBeginPeriod(_TIMER_PERIOD_MS)
+        except Exception:
+            pass
+
+
+def _end_timer_period():
+    """Restore the Windows timer resolution (ref-counted)."""
+    global _timer_period_count
+    if _timer_period_count > 0:
+        _timer_period_count -= 1
+        if _timer_period_count == 0:
+            try:
+                _winmm.timeEndPeriod(_TIMER_PERIOD_MS)
+            except Exception:
+                pass
+
+
+def _boost_thread():
+    """Raise the calling thread to TIME_CRITICAL (best-effort)."""
+    try:
+        _kernel32.SetThreadPriority(_kernel32.GetCurrentThread(),
+                                    THREAD_PRIORITY_TIME_CRITICAL)
+    except Exception:
+        pass
 
 # ------------------------------------------------------------------
 # Low-level mouse hook
@@ -188,23 +239,29 @@ def toggle_from_hotkey():
             pass
 
 
-def _inject_down():
-    """Inject LEFT DOWN only (used by hold mode to keep the button pressed)."""
+def _inject_down() -> bool:
+    """Inject LEFT DOWN only (used by hold mode to keep the button pressed).
+
+    Returns True if SendInput accepted the event (1 injected). False means
+    the event was blocked — typically UIPI: the target game runs elevated
+    (admin) while this process doesn't, or input is disabled on a secure
+    desktop (UAC prompt / lock screen).
+    """
     down = INPUT()
     down.type = INPUT_MOUSE
     down.u.mi.dwFlags = MOUSEEVENTF_LEFTDOWN
-    _user32.SendInput(1, ctypes.byref(down), ctypes.sizeof(INPUT))
+    return _user32.SendInput(1, ctypes.byref(down), ctypes.sizeof(INPUT)) == 1
 
 
-def _inject_up():
+def _inject_up() -> bool:
     """Inject LEFT UP only (used by hold mode to release)."""
     up = INPUT()
     up.type = INPUT_MOUSE
     up.u.mi.dwFlags = MOUSEEVENTF_LEFTUP
-    _user32.SendInput(1, ctypes.byref(up), ctypes.sizeof(INPUT))
+    return _user32.SendInput(1, ctypes.byref(up), ctypes.sizeof(INPUT)) == 1
 
 
-def _inject_click(hold_s: float = 0.0):
+def _inject_click(hold_s: float = 0.0) -> bool:
     """Inject one left-button click via SendInput, as two separate events.
 
     down and up are sent in SEPARATE SendInput calls with a hold delay
@@ -214,15 +271,72 @@ def _inject_click(hold_s: float = 0.0):
     it concludes the trigger was never released → only the first shot
     fires. A real trigger cycle needs press → hold → release.
     """
-    _inject_down()
+    if not _inject_down():
+        return False
     if hold_s > 0:
         time.sleep(hold_s)
-    _inject_up()
+    return _inject_up()
+
+
+# ------------------------------------------------------------------
+# Injection failure detection
+# ------------------------------------------------------------------
+
+# SendInput failing continuously means the game is likely running at a
+# higher integrity level (admin) than us, or input is disabled — keep
+# clicking would be pointless, so after a threshold we stop injecting
+# and raise a user-visible warning (once per failure streak).
+_failure_threshold = 20
+_failure_count = 0
+_failure_reported = False
+_failure_cb = None  # set by main.py: called (on any thread) when a streak ends
+
+
+def _note_injection_result(ok: bool):
+    """Track SendInput success/failure; fire _failure_cb on a long streak.
+
+    _failure_cb(blocked: bool) is called once when a failure streak
+    crosses the threshold, and again (blocked=False) when injections
+    recover — so the GUI can show and clear the warning.
+    """
+    global _failure_count, _failure_reported
+    if ok:
+        _failure_count = 0
+        if _failure_reported:
+            _failure_reported = False
+            if _failure_cb:
+                try:
+                    _failure_cb(False)
+                except Exception:
+                    pass
+        return
+    _failure_count += 1
+    if _failure_count >= _failure_threshold and not _failure_reported:
+        _failure_reported = True
+        if _failure_cb:
+            try:
+                _failure_cb(True)
+            except Exception:
+                pass
 
 
 # ------------------------------------------------------------------
 # AutoClicker
 # ------------------------------------------------------------------
+
+def _timing(interval_ms: int) -> tuple[float, float]:
+    """Derive (interval_s, hold_s) from the configured interval in ms.
+
+    hold = half the interval (press cycle is down→hold→up, matching a
+    real click where the button is physically down ~50% of the time —
+    same ratio b1scoito/clicker uses). Clamped so very fast intervals
+    keep a minimum hold (games still need >=1 frame of press) and slow
+    intervals don't feel like a drag (max 40 ms).
+    """
+    interval = max(20, min(500, int(interval_ms))) / 1000.0
+    hold = min(0.040, max(0.008, interval * 0.5))
+    return interval, hold
+
 
 class AutoClicker:
     """Hold-to-repeat auto-clicker, gated by config + whitelist + pause."""
@@ -238,9 +352,13 @@ class AutoClicker:
         self._hook_handle: int | None = None
 
     def start(self):
+        global _failure_count, _failure_reported
         if self._running:
             return
         self._running = True
+        _failure_count = 0
+        _failure_reported = False
+        _begin_timer_period()
         self._thread = threading.Thread(
             target=self._run, daemon=True, name="autoclicker-hook"
         )
@@ -269,6 +387,7 @@ class AutoClicker:
         if self._click_thread and self._click_thread.is_alive():
             self._click_thread.join(timeout=2.0)
         self._click_thread = None
+        _end_timer_period()
 
     # ------------------------------------------------------------------
     # Internal
@@ -277,6 +396,7 @@ class AutoClicker:
     def _run(self):
         global _hook_proc_holder
         _hook_proc_holder = _HOOKPROC(_hook_proc)
+        _boost_thread()
 
         self._hook_handle = _user32.SetWindowsHookExW(
             WH_MOUSE_LL, _hook_proc_holder, None, 0
@@ -309,20 +429,28 @@ class AutoClicker:
         return True
 
     def _click_loop(self):
-        interval = max(0.02, self._config.get_autoclick_interval() / 1000.0)
-        # Trigger hold: long enough for the game to register a real press
-        # (>= 1 frame), but short enough not to eat the whole interval.
-        hold = min(0.015, max(0.005, interval * 0.25))
+        _boost_thread()
+        # NOTE: interval/hold are re-read on EVERY iteration so config
+        # changes (GUI settings) take effect immediately — previously
+        # they were cached once before the loop, so changing the interval
+        # required restarting the whole app.
         while self._running:
             try:
+                interval, hold = _timing(self._config.get_autoclick_interval())
                 if self._config.get_autoclick_mode() == "hold":
                     self._hold_cycle()
                 elif self._should_click():
-                    _inject_click(hold)
-                    # Remaining time = release window: the game must see a
-                    # sustained "button up" before the next press, or
-                    # semi-automatic weapons won't re-fire.
-                    time.sleep(max(0.005, interval - hold))
+                    ok = _inject_click(hold)
+                    _note_injection_result(ok)
+                    if ok:
+                        # Remaining time = release window: the game must
+                        # see a sustained "button up" before the next
+                        # press, or semi-automatic weapons won't re-fire.
+                        time.sleep(max(0.005, interval - hold))
+                    else:
+                        # Injected clicks are being blocked (admin game,
+                        # locked desktop…) — stop hammering, just idle.
+                        time.sleep(0.05)
                 else:
                     time.sleep(0.01)  # idle poll — respond to release fast
             except Exception:
@@ -339,11 +467,11 @@ class AutoClicker:
         global _injected_down
         if self._should_click():
             if not _injected_down:
-                _inject_down()
+                _note_injection_result(_inject_down())
                 _injected_down = True
             time.sleep(0.01)
         else:
             if _injected_down:
-                _inject_up()
+                _note_injection_result(_inject_up())
                 _injected_down = False
             time.sleep(0.01)

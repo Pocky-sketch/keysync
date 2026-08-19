@@ -148,9 +148,21 @@ expect("注入: 先 down 后 up",
        calls[0] == autoclicker.MOUSEEVENTF_LEFTDOWN
        and calls[1] == autoclicker.MOUSEEVENTF_LEFTUP)
 
-# hold 时间推导
-hold = min(0.015, max(0.005, 0.05 * 0.25))
-expect("注入: hold 推导 (50ms 间隔 → 12.5ms)", abs(hold - 0.0125) < 0.001)
+# hold 时间推导 (半周期: down→hold→up, 按住=间隔一半)
+interval, hold = autoclicker._timing(50)
+expect("注入: 间隔推导 (50ms → 0.05s)", abs(interval - 0.05) < 0.001)
+expect("注入: hold 推导 (50ms 间隔 → 25ms)", abs(hold - 0.025) < 0.001)
+
+# _timing 边界
+i, h = autoclicker._timing(5)      # clamp 下限 20ms
+expect("注入: interval clamp 20ms", abs(i - 0.02) < 0.001)
+i, h = autoclicker._timing(9999)   # clamp 上限 500ms
+expect("注入: interval clamp 500ms", abs(i - 0.5) < 0.001)
+expect("注入: hold 上限 40ms", h <= 0.040)
+i, h = autoclicker._timing(20)
+expect("注入: 快速间隔 hold 保底 8ms", h >= 0.008)
+i, h = autoclicker._timing(500)
+expect("注入: 慢速间隔 hold 40ms", abs(h - 0.040) < 0.001)
 
 # ---- hold 模式 (全自动武器) ----
 cfg.set_autoclick_mode("hold")
@@ -255,6 +267,36 @@ finally:
     autoclicker._user32.SendInput = orig_si
     autoclicker._injected_down = False
     cfg.set_autoclick_hotkey("")
+
+# ---- 注入失败检测 / 告警 (SendInput 返回 0 = 被拦截) ----
+def fake_si_fail(n, ptr, size):
+    return 0  # 模拟 UIPI 拦截 (游戏管理员 + 本进程非管理员)
+
+autoclicker._failure_count = 0
+autoclicker._failure_reported = False
+cb_log = []
+autoclicker._failure_cb = lambda blocked: cb_log.append(blocked)
+autoclicker._user32.SendInput = fake_si_fail
+try:
+    for _ in range(19):
+        autoclicker._note_injection_result(False)
+    expect("失败: 19 次未达阈值不告警", cb_log == [])
+    autoclicker._note_injection_result(False)
+    expect("失败: 第 20 次触发告警", cb_log == [True])
+    autoclicker._note_injection_result(False)
+    expect("失败: 连续失败只告警一次", cb_log == [True])
+    autoclicker._note_injection_result(True)
+    expect("失败: 恢复后回调清除告警", cb_log == [True, False])
+    autoclicker._note_injection_result(False)
+    autoclicker._note_injection_result(False)
+    expect("失败: 恢复后重新累计", cb_log == [True, False])
+    # _inject_click 失败短路 (down 失败不再发 up)
+    expect("失败: _inject_click 返回 False", autoclicker._inject_click(0.0) is False)
+finally:
+    autoclicker._user32.SendInput = orig_si
+    autoclicker._failure_count = 0
+    autoclicker._failure_reported = False
+    autoclicker._failure_cb = None
 
 print()
 print("全部通过" if ok else "存在失败项!")

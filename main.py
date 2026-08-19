@@ -172,6 +172,25 @@ def main():
     _kh._config_change_cb = gui.notify_config_changed
     _ac._config_change_cb = gui.notify_config_changed
 
+    # Auto-click injection failures (SendInput blocked: game runs as
+    # admin while we don't, secure desktop…) → log + GUI warning.
+    def _on_ac_failure(blocked: bool):
+        try:
+            import datetime
+            log_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "KeySync")
+            os.makedirs(log_dir, exist_ok=True)
+            with open(os.path.join(log_dir, "autoclicker.log"), "a", encoding="utf-8") as f:
+                f.write(f"{datetime.datetime.now().isoformat()} "
+                        f"{'BLOCKED' if blocked else 'RECOVERED'}: SendInput "
+                        f"{'rejected' if blocked else 'accepted'}\n")
+        except Exception:
+            pass
+        if blocked:
+            gui.notify_autoclick_failure()
+        else:
+            gui.clear_autoclick_failure()
+    _ac._failure_cb = _on_ac_failure
+
     # --- Create tray icon ---
     def toggle_gui():
         if gui.is_visible():

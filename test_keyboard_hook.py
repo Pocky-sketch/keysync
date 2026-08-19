@@ -153,6 +153,42 @@ ok &= expect("映射: 无卡键 (_keys_down 清空)", kh._keys_down.get("w", Fal
 cfg.remove_mapping(0)  # w→left shift
 cfg.add_mapping("a", "b")
 
+# --- 场景 7: 热键匹配 (add_hotkey 本机失效 → 从原始钩子流匹配) ---
+import autoclicker as ac_mod
+ac_mod._config = cfg  # toggle_from_hotkey 需要模块级 _config
+
+reset()
+cfg.set_enabled(True)
+cfg.set_toggle_hotkey("pause")
+cfg.set_autoclick_hotkey("f9")
+cfg.set_autoclick_enabled(False)
+
+_on_key_event(ev("pause", "down"))
+ok &= expect("热键: Pause down 触发 toggle 关闭", kh._config.is_enabled() is False)
+_on_key_event(ev("pause", "up"))
+ok &= expect("热键: Pause up 不重复 toggle", kh._config.is_enabled() is False)
+_on_key_event(ev("pause", "down"))
+ok &= expect("热键: Pause 再次触发 toggle 开启", kh._config.is_enabled() is True)
+
+_on_key_event(ev("f9", "down"))
+ok &= expect("热键: f9 down 触发连点开启", cfg.is_autoclick_enabled() is True)
+_on_key_event(ev("f9", "down"))
+ok &= expect("热键: f9 再次触发连点关闭", cfg.is_autoclick_enabled() is False)
+
+cfg.set_autoclick_hotkey("mouse4")
+_on_key_event(ev("mouse4", "down"))
+ok &= expect("热键: mouse 热键不匹配键盘钩子", cfg.is_autoclick_enabled() is False)
+
+# 热键匹配在 enabled 门控之前 → 关闭状态下热键仍可切换
+cfg.set_autoclick_hotkey("f9")
+cfg.set_enabled(False)
+_on_key_event(ev("f9", "down"))
+ok &= expect("热键: 同步关闭时 f9 仍可切换连点", cfg.is_autoclick_enabled() is True)
+
+cfg.set_autoclick_hotkey("")
+cfg.set_autoclick_enabled(False)
+ac_mod._config = None  # 清理模块级引用
+
 print()
 print("全部通过" if ok else "存在失败项!")
 sys.exit(0 if ok else 1)
